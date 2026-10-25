@@ -1,0 +1,82 @@
+// scanner.lume — A 股信号扫描入口(Lume 单二进制):server{} + 只读 SQLite + agent 工具
+//
+// 启动: make dev  → http://127.0.0.1:8094
+//   /                    仪表盘 SPA(信号 / 规则筛选 / 个股 / AI 聊天)
+//   GET  /api/signals    全市场信号扫描(近两交易日 MACD/KDJ 金叉死叉、RSI 超买卖、布林突破、量价)
+//   POST /api/screen     自定义规则筛选(量比/换手/RSI/市值 白名单字段 → 参数绑定 WHERE, 不拼 SQL)
+//   GET  /api/stock/:code  个股 K 线 + 指标序列(近 N 日, join asset 快照取名称/市值)
+//   GET  /api/meta       数据源/行数/最新交易日(前端「数据截至」)
+//
+// 架构(同 lume-orbstack 范式):
+//   - 信号「计算」(51 指标 ETL)留在 Python 端 stock-analyzer(每晚 make etl),
+//     本服务只读其 SQLite(sql_query 单语句 + SELECT-only 护栏), 零写操作。
+//   - 库路径经 env SCANNER_DB / ASSET_DB 指定; make dev 默认指向 .data/scanner.db
+//     (scripts/make_sample_data.py 生成), 生产指向真实 stock-analyzer 的 data/ 双库。
+//   - agent 工具 scan_signals / screen_stocks / stock_kline 在 src/repo.lume 顶层注册,
+//     白名单由 make dev 注入 HARNESS_TOOLS_ALLOW(沿用 invest.lume 守门模式)。
+
+let sc_bind = env("LUME_BIND");
+if (sc_bind == null) { sc_bind = "127.0.0.1"; }
+let sc_port = env("LUME_PORT");
+if (sc_port == null) { sc_port = "8094"; }
+server {
+  port = int(sc_port);
+  workers = 2;
+  bind = sc_bind;
+  docroot = "./www";
+  spa = true;                       // SPA history 路由: GET + 静态 404 → 回 index.html
+  htpasswd = env("HTPASSWD_FILE");  // 本地留空 = 无认证; 对外部署注入即开 Basic Auth
+};
+
+// 领域层: 只读查询 + 信号判定 + 工具注册(import 即注册进全局工具表)。
+import "src/repo.lume" as repo;
+
+// ---- 信号: 近两交易日全市场扫描(读 stock_analysis, 口径同 stock-analyzer ETL)----
+get "/api/signals", (req) => {
+  let limit = int(get(req.query_params, "limit", "80"));
+  return repo.signals_payload(limit);
+};
+
+// ---- 规则筛选: POST {"filters": {...}} → 白名单字段 WHERE(值走 ? 占位, 不拼进 SQL)----
+post "/api/screen", (req) => {
+  let b = try(() => json(req.body));
+  if (b.err != null) {
+    return { status: 400, type: "application/json", body: stringify({ ok: false, err: b.err }) };
+  }
+  let filters = get(b.ok, "filters");
+  let limit = int(get(req.query_params, "limit", "50"));
+  return repo.screen_payload(filters, limit);
+};
+
+// ---- 个股: K 线 + 指标序列(动态段 :code; sh/sz/bj 前缀原样, 数字代码自动补市场前缀)----
+get "/api/stock/:code", (req) => {
+  // 动态段捕获在 req.params(带 URL 解码); `params` 与内建 get 同名但此处是路由请求 map 的字段。
+  let code = get(req.params, "code", "");
+  let days = int(get(req.query_params, "days", "120"));
+  return repo.stock_payload(code, days);
+};
+
+// ---- 二期(#54): 实时技术指标 — 读原始 OHLCV, 用 Lume 内建(KDJ/Williams%R/ATR/OBV)现算,
+//   不依赖 Python ETL 的 kdj_k/atr 等指标列; 前端/agent 想要「独立口径」的指标时用这条。----
+get "/api/indicators/:code", (req) => {
+  let code = get(req.params, "code", "");
+  let days = int(get(req.query_params, "days", "60"));
+  let period = int(get(req.query_params, "period", "14"));
+  return repo.indicators_payload(code, days, period);
+};
+
+// ---- 数据源元信息(最新交易日/标的数, 前端「数据截至 X」)----
+get "/api/meta", (req) => {
+  return repo.meta_payload();
+};
+
+// ---- agent 能力一览(启动时集成发现的工具/白名单, GET)----
+get "/discovery", (req) => {
+  return {
+    skills: skills(),
+    tools: tools(),
+    mcps: mcps(),
+  };
+};
+
+run();  // 注册窗口关闭, 开始伺服

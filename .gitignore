@@ -1,0 +1,11 @@
+.data/
+www/app.js
+# node_modules 是软链(→ ../lume/frontend/node_modules), 两种写法都忽略(软链 + 目录)
+node_modules
+node_modules/
+logs/
+*.log
+.env
+
+# 本机测试脚手架 (mktemp/xcrun shim, 沙箱写 /tmp 被锁时用)
+.work-sc/

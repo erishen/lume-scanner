@@ -1,0 +1,233 @@
+// src/repo.lume — 领域层: 只读信号扫描 / 规则筛选 / 个股序列 / 数据源元信息
+// 纯无状态; 库路径经 env SCANNER_DB / ASSET_DB 指定, make dev 默认指向 .data/。
+// 信号「计算」(51 指标 ETL) 在 Python 端 stock-analyzer, 本模块只读其 SQLite 结果列。
+
+// ---- 库路径解析(env 优先, 缺省本地样例) ----
+func db_scan() {
+  let p = env("SCANNER_DB");
+  if (p == null) { return ".data/scanner.db"; }
+  return p;
+}
+func db_asset() {
+  let p = env("ASSET_DB");
+  if (p == null) { return ".data/asset.db"; }
+  return p;
+}
+
+// ---- 数据源元信息(最新交易日/标的数/行数) ----
+export func meta_payload() {
+  let db = db_scan();
+  let ad = db_asset();
+  let d = sql_query(db, "select max(date) as latest, count(distinct code) as stocks, count(*) as rows from stock_analysis");
+  let latest = null;
+  let stocks = 0;
+  let arows = 0;
+  if (len(d) > 0) {
+    latest = get(d[0], "latest");
+    stocks = int(get(d[0], "stocks", 0));
+    arows = int(get(d[0], "rows", 0));
+  }
+  let a = sql_query(ad, "select count(*) as n from asset_snapshot");
+  let n = 0;
+  if (len(a) > 0) { n = int(get(a[0], "n", 0)); }
+  return { ok: true, latest_date: latest, stocks: stocks, analysis_rows: arows, asset_rows: n };
+}
+
+// ---- 全市场信号扫描: 最近一个交易日, 遍历 ETL 已算好的 flag 列分类 ----
+// 口径与 stock-analyzer src/etl/pipeline.py 一致: macd_cross/kdj_cross=金叉,
+// rsi_oversold/overbought(30/70), williams(±80/-20), obv_signal, boll_position(>1 破上轨/<0 破下轨)。
+export func signals_payload(limit) {
+  let db = db_scan();
+  let dates = sql_query(db, "select distinct date from stock_analysis order by date desc limit 2");
+  if (len(dates) < 1) {
+    return { ok: true, date: null, count: 0, signals: [], note: "暂无数据" };
+  }
+  let last = get(dates[0], "date");
+  let rows = sql_query(db,
+    "select code, close, change_percent, rsi, rsi_oversold, rsi_overbought, " +
+    "macd_cross, kdj_cross, williams_oversold, williams_overbought, obv_signal, boll_position " +
+    "from stock_analysis where date = ?", [last]);
+  let out = [];
+  let i = 0;
+  while (i < len(rows) and len(out) < limit) {
+    let r = rows[i];
+    let sigs = [];
+    if (int(get(r, "macd_cross", 0)) == 1) { push(sigs, "MACD金叉"); }
+    if (int(get(r, "kdj_cross", 0)) == 1) { push(sigs, "KDJ金叉"); }
+    if (int(get(r, "rsi_oversold", 0)) == 1) { push(sigs, "RSI超卖"); }
+    if (int(get(r, "rsi_overbought", 0)) == 1) { push(sigs, "RSI超买"); }
+    if (int(get(r, "williams_oversold", 0)) == 1) { push(sigs, "威廉超卖"); }
+    if (int(get(r, "williams_overbought", 0)) == 1) { push(sigs, "威廉超买"); }
+    if (int(get(r, "obv_signal", 0)) == 1) { push(sigs, "OBV放量"); }
+    let bp = float(get(r, "boll_position", 0.0));
+    if (bp > 1.0) { push(sigs, "突破布林上轨"); }
+    if (bp < 0.0) { push(sigs, "跌破布林下轨"); }
+    if (len(sigs) > 0) {
+      push(out, {
+        code: get(r, "code"),
+        close: float(get(r, "close", 0.0)),
+        change: float(get(r, "change_percent", 0.0)),
+        rsi: float(get(r, "rsi", 0.0)),
+        signals: sigs,
+      });
+    }
+    i = i + 1;
+  }
+  return { ok: true, date: last, count: len(out), signals: out };
+}
+
+// ---- 规则筛选: POST filters map → 白名单字段 WHERE(列名固定, 值走 ? 占位, 杜绝注入) ----
+// 在 asset_snapshot(估值/量能字段, 含名称)上做; 未传 filters 返回量比前 limit 名。
+export func screen_payload(filters, limit) {
+  let db = db_asset();
+  let where = "1=1";
+  let params = [];
+  if (filters != null) {
+    let vr = get(filters, "volume_ratio_min");
+    if (vr != null) { where = where + " and volume_ratio >= ?"; push(params, float(vr)); }
+    let to = get(filters, "turnover_rate_min");
+    if (to != null) { where = where + " and turnover_rate >= ?"; push(params, float(to)); }
+    let mv = get(filters, "total_market_value_min");
+    if (mv != null) { where = where + " and total_market_value >= ?"; push(params, float(mv)); }
+    let cl = get(filters, "close_min");
+    if (cl != null) { where = where + " and close >= ?"; push(params, float(cl)); }
+    let ch = get(filters, "close_max");
+    if (ch != null) { where = where + " and close <= ?"; push(params, float(ch)); }
+  }
+  let sql = "select code, name, close, change_percent, volume_ratio, turnover_rate, total_market_value, float_market_value " +
+            "from asset_snapshot where " + where + " order by volume_ratio desc limit ?";
+  push(params, int(limit));
+  let rows = sql_query(db, sql, params);
+  return { ok: true, count: len(rows), rows: rows, where: where };
+}
+
+// ---- 代码归一: asset_snapshot 用纯 6 位数字, stock_analysis 带 sh/sz/bj 前缀 ----
+// 6 位数字 → 按板块补前缀(6/9=沪, 0/2/3=深, 4/8=北); 已带前缀的原样返回。
+export func norm_code(c) {
+  let s = str(c);
+  if (len(s) == 8) {
+    let p = lower(substr(s, 0, 2));
+    if (p == "sh" or p == "sz" or p == "bj") { return s; }
+  }
+  if (len(s) == 6) {
+    let d = substr(s, 0, 1);
+    if (d == "6" or d == "9") { return "sh" + s; }
+    if (d == "0" or d == "2" or d == "3") { return "sz" + s; }
+    return "bj" + s;
+  }
+  return s;
+}
+
+// ---- 个股 K 线 + 指标序列(近 days 日, 时间升序; 入参可带或不带市场前缀)----
+export func stock_payload(code, days) {
+  let db = db_scan();
+  let c = norm_code(code);
+  let rows = sql_query(db,
+    "select date, open, high, low, close, volume, change_percent, ma5, ma20, rsi, macd, macd_signal, kdj_k, kdj_d, atr " +
+    "from stock_analysis where code = ? order by date desc limit ?", [c, int(days)]);
+  let asc = [];
+  let i = len(rows) - 1;
+  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+  return { ok: true, code: c, days: len(asc), series: asc };
+}
+
+// ---- 二期(#54): 实时技术指标 — 只读原始 OHLCV, 用 Lume 内建现算, 不依赖 Python ETL 列 ----
+// 把 sql 结果某数值列抽成 Lume float list(供指标内建消费; 行已按日期升序)。
+func col_of(rows, key) {
+  let out = [];
+  let i = 0;
+  while (i < len(rows)) {
+    push(out, float(get(rows[i], key, 0.0)));
+    i = i + 1;
+  }
+  return out;
+}
+
+// 字符串列(如 date)原样抽成 list(不做数值宽化)。
+func str_col_of(rows, key) {
+  let out = [];
+  let i = 0;
+  while (i < len(rows)) {
+    push(out, str(get(rows[i], key, "")));
+    i = i + 1;
+  }
+  return out;
+}
+
+// 指标序列前 window-1 项是 NAN(冷启动), 截到首个有效值起, 且把 NAN 归一为 null,
+// 保证 JSON 响应合法(前导冷启动不留 NaN, 前端直接渲染)。
+func clean_list(xs, from) {
+  let out = [];
+  let i = from;
+  while (i < len(xs)) {
+    let v = xs[i];
+    let is_nan = (v != v);
+    push(out, is_nan ? null : v);
+    i = i + 1;
+  }
+  return out;
+}
+
+export func indicators_payload(code, days, period) {
+  let db = db_scan();
+  let c = norm_code(code);
+  let p = int(period);
+  if (p < 2) { p = 14; }
+  if (days < 2) { days = 2; }
+  let rows = sql_query(db,
+    "select date, high, low, close, volume from stock_analysis where code = ? order by date desc limit ?",
+    [c, int(days)]);
+  let asc = [];
+  let i = len(rows) - 1;
+  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+  let n = len(asc);
+  let dates = str_col_of(asc, "date");
+  if (n < 2) {
+    return { ok: true, code: c, days: n, period: p, dates: dates, note: "数据不足(至少 2 日)",
+            kdj: null, williams_r: null, atr: null, obv: null };
+  }
+  let highs = col_of(asc, "high");
+  let lows = col_of(asc, "low");
+  let closes = col_of(asc, "close");
+  let vols = col_of(asc, "volume");
+  let kd = kdj(highs, lows, closes, p);
+  let cut = p - 1;
+  return {
+    ok: true, code: c, days: n, period: p, dates: dates,
+    kdj: {
+      rsv: clean_list(get(kd, "rsv", []), cut),
+      k: clean_list(get(kd, "k", []), cut),
+      d: clean_list(get(kd, "d", []), cut),
+      j: clean_list(get(kd, "j", []), cut),
+    },
+    williams_r: clean_list(williams_r(highs, lows, closes, p), cut),
+    atr: clean_list(atr(highs, lows, closes, p), cut),
+    obv: clean_list(obv(closes, vols), 0),
+  };
+}
+
+// ============================================================================
+// agent 工具(顶层注册, 白名单由 make dev 注入 HARNESS_TOOLS_ALLOW 过滤)
+// 全部只读: 只调 sql_query(SELECT-only 物理只读), 无任何写操作。
+// ============================================================================
+tool "scan_signals", "扫描全市场最新交易日的技术信号(MACD金叉/KDJ金叉/RSI超买卖/布林带突破/OBV放量), 返回带信号标签的标的列表。", {}, (arg) => {
+  return signals_payload(80);
+};
+
+tool "screen_stocks", "按估值/量能规则筛选个股: filters 可含 volume_ratio_min / turnover_rate_min / total_market_value_min / close_min / close_max(单位亿元/次/元), 返回匹配标的(名称+量比+换手+市值)。", { filters: map }, (arg) => {
+  return screen_payload(get(arg, "filters"), 50);
+};
+
+tool "stock_kline", "查个股近 N 日 K 线与技术指标序列(code 带 sh/sz/bj 市场前缀, days 缺省 60), 返回按时间升序的 open/high/low/close/ma5/ma20/rsi/macd 序列。", { code: string, days: int }, (arg) => {
+  let d = arg.days;
+  if (d <= 0) { d = 60; }
+  return stock_payload(arg.code, d);
+};
+
+tool "stock_indicators", "实时重算个股 KDJ/Williams%R/ATR/OBV(读原始 high/low/close/volume, 用 Lume 内建现算, 不依赖 Python ETL 指标列)。code 带/不带市场前缀均可, days 缺省 60, period 缺省 14。返回截去冷启动后的序列。", { code: string, days: int, period: int }, (arg) => {
+  let d = arg.days;
+  if (d <= 0) { d = 60; }
+  let p = arg.period;
+  if (p <= 0) { p = 14; }
+  return indicators_payload(arg.code, d, p);
+};

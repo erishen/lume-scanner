@@ -1,0 +1,19 @@
+{
+  "name": "scanner-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Lume A-share signal scanner client: React + TypeScript SPA, bundled by esbuild into www/ for the Lume docroot.",
+  "scripts": {
+    "build": "esbuild src/scanner/app.tsx --bundle --minify --format=esm --jsx=automatic --outdir=www --outbase=src/scanner",
+    "dev": "esbuild src/scanner/app.tsx --bundle --format=esm --jsx=automatic --outdir=www --outbase=src/scanner --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.4.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0"
+  },
+  "license": "MIT"
+}
