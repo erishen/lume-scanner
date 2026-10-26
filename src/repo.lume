@@ -90,11 +90,23 @@ export func signals_payload(limit) {
     if (bp > 1.0) { push(sigs, "突破布林上轨"); }
     if (bp < 0.0) { push(sigs, "跌破布林下轨"); }
     if (len(sigs) > 0) {
+      let rsi_etl = float(get(r, "rsi", 0.0));
+      let rsi_lume = lume_rsi_live(get(r, "code"), 14);
+      // 双口径对照: ETL rsi 列(Cutler, 读库) vs Lume 现算(Wilder, 读原始 close);
+      // 两者平滑方式不同, 数值会有分叉, 分叉量在此暴露给用户。same = 两值差 < 2(百分点)。
+      let tag = "none";
+      if (rsi_lume != null) {
+        let diff = rsi_lume - rsi_etl;
+        if (diff < 0.0) { diff = -diff; }
+        tag = diff < 2.0 ? "same" : "branched";
+      }
       push(out, {
         code: get(r, "code"),
         close: float(get(r, "close", 0.0)),
         change: float(get(r, "change_percent", 0.0)),
-        rsi: float(get(r, "rsi", 0.0)),
+        rsi: rsi_etl,
+        rsi_lume: rsi_lume,
+        rsi_match: tag,
         signals: sigs,
       });
     }
@@ -216,6 +228,28 @@ func tail_k(xs, k) {
   let i = len(xs) - k;
   while (i < len(xs)) { push(out, xs[i]); i = i + 1; }
   return out;
+}
+
+// Lume 现算 Wilder RSI(读最近 ~64 根收盘价, 不读 ETL rsi 列), 返回尾值(1 位小数)或 null。
+// 用于信号页 ETL(Cutler) vs Lume(Wilder) 双口径对照: 同一只票, 两种 RSI 平滑方式的分叉量。
+export func lume_rsi_live(code, period) {
+  let db = db_scan();
+  let c = norm_code(code);
+  let rows = sql_query(db,
+    "select close from stock_analysis where code = ? order by date desc limit 64",
+    [c]);
+  if (len(rows) < 3) { return null; }
+  let asc = [];
+  let i = len(rows) - 1;
+  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+  let closes = col_of(asc, "close");
+  let w = int(period);
+  if (w > len(closes) - 1) { w = len(closes) - 1; }
+  if (w < 1) { return null; }
+  let rs = rsi(closes, w);
+  let v = tail_k(rs, 1)[0];
+  if (v == null or v != v) { return null; }
+  return v;
 }
 
 export func indicators_payload(code, days, period) {

@@ -39,6 +39,8 @@ export interface SignalRow {
   close: number;
   change: number;
   rsi: number;
+  rsi_lume: number | null;
+  rsi_match: "none" | "same" | "branched" | null;
   signals: string[];
 }
 

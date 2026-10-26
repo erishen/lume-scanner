@@ -145,10 +145,10 @@ function SignalsTab({ onStock, onInd }: Openers) {
   if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
   return (
     <div className="card">
-      <h3>截至 {data.date} · 共 {data.count} 只带信号</h3>
+      <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI 双口径: ETL(Cutler) vs Lume 现算(Wilder)</span></h3>
       <table>
         <thead>
-          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI</th><th>信号</th><th>操作</th></tr>
+          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI(ETL)</th><th>RSI(Lume)</th><th>口径</th><th>信号</th><th>操作</th></tr>
         </thead>
         <tbody>
           {data.signals.map((s) => (
@@ -158,6 +158,14 @@ function SignalsTab({ onStock, onInd }: Openers) {
               <td><Num v={s.close} /></td>
               <td className={cls(s.change)}><Num v={s.change} /></td>
               <td><Num v={s.rsi} /></td>
+              <td><Num v={s.rsi_lume} /></td>
+              <td>
+                {s.rsi_lume == null
+                  ? <span style={{ color: "var(--faint)" }}>—</span>
+                  : s.rsi_match === "same"
+                    ? <span className="chip green" title="两种口径接近(差 < 2 点)">一致</span>
+                    : <span className="chip gold" title="Cutler(ETL) 与 Wilder(Lume) 平滑方式不同, 数值分叉">分叉</span>}
+              </td>
               <td><Chips items={s.signals} /></td>
               <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
                 <button className="ghost" onClick={() => onStock(s.code)}>个股</button>{" "}
