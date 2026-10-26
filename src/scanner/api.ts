@@ -222,3 +222,50 @@ export async function fetchIndexes(): Promise<RealtimeIndexes> {
   const r = await fetch("/api/realtime/indexes");
   return getJSON<RealtimeIndexes>(r);
 }
+
+// ---- 信号历史战绩 / 今日精选(「个人投资价值」层: 规则从信仰变证据) ----
+export interface SignalStat {
+  sig: string;
+  n: number;
+  r1?: number | null;
+  r5?: number | null;
+  r10?: number | null;
+  win5?: number | null;
+}
+
+export interface SignalStatsPayload {
+  ok: boolean;
+  window?: string;
+  ts?: number;
+  signals: SignalStat[];
+  note?: string;
+  reason?: string;
+}
+
+export interface DailyPick {
+  code: string;
+  name: string;
+  close?: number | null;
+  change?: number | null;
+  signals: string[];
+  volume_ratio?: number | null;
+  market_value?: number | null;
+  score?: number | null;
+}
+
+export interface DailyPicksPayload {
+  ok: boolean;
+  date?: string | null;
+  picks: DailyPick[];
+  note?: string;
+}
+
+export async function fetchSignalStats(): Promise<SignalStatsPayload> {
+  const r = await fetch("/api/signal-stats");
+  return getJSON<SignalStatsPayload>(r);
+}
+
+export async function fetchDailyPicks(): Promise<DailyPicksPayload> {
+  const r = await fetch("/api/daily-picks");
+  return getJSON<DailyPicksPayload>(r);
+}

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   fetchMeta, fetchSignals, fetchScreen, fetchStock, fetchIndicators,
-  fetchRealtime, fetchIndexes,
+  fetchRealtime, fetchIndexes, fetchSignalStats, fetchDailyPicks,
   type Meta, type SignalPayload, type ScreenPayload, type StockPayload, type Filters, type IndicatorsPayload,
-  type Realtime, type RealtimeIndexes,
+  type Realtime, type RealtimeIndexes, type SignalStatsPayload, type DailyPicksPayload,
 } from "./api";
 import { ChatTab } from "./chat";
 
@@ -114,8 +114,9 @@ function cls(n: number): string {
   return "";
 }
 
-function Num({ v, digits = 2 }: { v: number | null | undefined; digits?: number }) {
-  return <span>{v == null ? "—" : v.toFixed(digits)}</span>;
+function Num({ v, digits = 2, hint }: { v: number | null | undefined; digits?: number; hint?: string }) {
+  if (v == null) return hint ? <span className="cold-hint" title="rolling 指标冷启动, 上市初期无值">{hint}</span> : <span>—</span>;
+  return <span>{v.toFixed(digits)}</span>;
 }
 
 // ---- 信号 chip 语义着色(按关键词)----
@@ -152,6 +153,8 @@ function SignalsTab({ onStock, onInd }: Openers) {
   return (
     <>
       <IndexTicker />
+      <PicksCard onStock={onStock} onInd={onInd} />
+      <StatsCard />
       <div className="card">
       <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
       <table>
@@ -331,6 +334,85 @@ function IndexTicker() {
   );
 }
 
+// ---- 今日精选(信号数×量比×市值打分 Top 8; 信号页顶部) ----
+function PicksCard({ onStock, onInd }: Openers) {
+  const [pk, setPk] = useState<DailyPicksPayload | null>(null);
+  useEffect(() => { fetchDailyPicks().then(setPk).catch(() => {}); }, []);
+  if (!pk || !pk.picks.length) return null;
+  return (
+    <div className="card">
+      <h3>今日精选 Top {pk.picks.length} <span>· {pk.note}</span></h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>代码</th><th>名称</th><th>信号</th><th>量比</th><th>市值(亿)</th><th>打分</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          {pk.picks.map((p, i) => (
+            <tr key={p.code} className="rowlink" onClick={() => onStock(p.code)}>
+              <td>{i + 1}</td>
+              <td style={{ cursor: "pointer" }} title="点击看个股">{p.code}</td>
+              <td className="name">{p.name || "—"}</td>
+              <td><Chips items={p.signals} /></td>
+              <td><Num v={p.volume_ratio} /></td>
+              <td><Num v={p.market_value} digits={0} /></td>
+              <td><b>{(p.score ?? 0).toFixed(0)}</b></td>
+              <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                <button className="ghost" onClick={() => onStock(p.code)}>个股</button>{" "}
+                <button className="ghost" onClick={() => onInd(p.code)}>指标</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---- 信号历史战绩(180d; 每条信号的历史 1/5/10 日收益 + 5 日胜率 = 规则的「证据」) ----
+function StatsCard() {
+  const [st, setSt] = useState<SignalStatsPayload | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    fetchSignalStats().then(setSt).catch((e) => setErr(String(e)));
+  }, []);
+  if (err) return <div className="err">战绩加载失败: {err}</div>;
+  if (!st) {
+    return (
+      <div className="card">
+        <h3>信号历史战绩 <span>· 首查需扫 8.5M 行窗口函数 ~8s</span></h3>
+        <div className="kv">计算中…</div>
+      </div>
+    );
+  }
+  if (!st.ok) return <div className="err">战绩查询失败: {st.reason}</div>;
+  return (
+    <div className="card">
+      <h3>信号历史战绩(近 {st.window}) <span>· {st.note}</span></h3>
+      <table>
+        <thead>
+          <tr><th>信号</th><th>事件数</th><th>1日均</th><th>5日均</th><th>10日均</th><th>5日胜率</th></tr>
+        </thead>
+        <tbody>
+          {st.signals.map((s) => {
+            const w = s.win5;
+            const wTone = w == null ? "" : w >= 50 ? "up" : w >= 45 ? "" : "down";
+            return (
+              <tr key={s.sig}>
+                <td className="name">{s.sig}</td>
+                <td>{s.n.toLocaleString()}</td>
+                <td className={cls(s.r1 ?? 0)}>{s.r1 == null ? "—" : s.r1.toFixed(2) + "%"}</td>
+                <td className={cls(s.r5 ?? 0)}>{s.r5 == null ? "—" : s.r5.toFixed(2) + "%"}</td>
+                <td className={cls(s.r10 ?? 0)}>{s.r10 == null ? "—" : s.r10.toFixed(2) + "%"}</td>
+                <td className={wTone}>{w == null ? "—" : w.toFixed(1) + "%"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ---- Tab 3: 个股 K 线 + 指标 ----
 // seed: 共享的「当前个股」(与指标页跟随); onQuery: 本页手动查询后上报, 供指标页跟随
 function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
@@ -394,9 +476,9 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
                       <td><Num v={r.low} /> / <Num v={r.high} /></td>
                       <td>{r.volume == null ? "—" : (r.volume / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}</td>
                       <td className={cls(r.change_percent)}><Num v={r.change_percent} /></td>
-                      <td><Num v={r.ma5} /></td>
-                      <td><Num v={r.ma20} /></td>
-                      <td><Num v={r.rsi} /></td>
+                      <td><Num v={r.ma5} hint="上市不足5日" /></td>
+                      <td><Num v={r.ma20} hint="上市不足20日" /></td>
+                      <td><Num v={r.rsi} hint="不足14日" /></td>
                       <td><Num v={r.macd} digits={3} /></td>
                     </tr>
                   ))}
@@ -590,6 +672,7 @@ const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
     rows: [
       ["量(万)", "库内 volume 单位是「股」, 显示 ÷10000(茅台 576.9 = 577 万股)"],
       ["MA5 / MA20 / RSI / MACD", "ETL 预计算列(RSI=Cutler, MACD=DIF 12/26/9)"],
+      ["「上市不足5日/20日」「不足14日」斜体提示", "rolling 指标冷启动: 上市初期历史长度不够窗口, ETL 计算得 NULL(前 4/19/13 个交易日), 属正常数据行为, 非缺失故障"],
       ["实时卡 量(万手)", "腾讯口径 1 手 = 100 股, 与 K 线表「万股」不同源不同口径"],
       ["停牌 / 降级", "实时价卡: 停牌显示「停牌或无行情」, 上游挂显示「实时获取失败, 展示库内收盘」"],
     ],

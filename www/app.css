@@ -321,6 +321,9 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 /* ---- 表格全量展开按钮 ---- */
 .toggle-all { margin-top: 8px; font-size: 12px; }
 
+/* K 线表 rolling 指标冷启动空值提示(上市初期) */
+.cold-hint { color: var(--muted); font-size: 11px; font-style: italic; }
+
 /* ---- 字段说明 tab ---- */
 .glossary { display: grid; gap: 12px; }
 .glossary h3 span { font-weight: 400; color: var(--faint); font-size: 11px; }

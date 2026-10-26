@@ -83,7 +83,8 @@ type Msg = { role: "user" | "agent"; text: string; notes: string[] };
 // 只覆盖聊天场景常用子集; 流式中未闭合的围栏代码块会先按 pre 显示, done 后自动成形。
 function mdInline(text: string): ReactNode {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
+  // **加粗** 优先于 *斜体* (中文 LLM 两种都用); 行内代码; [链接](url)
+  const re = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let k = 0;
@@ -91,6 +92,7 @@ function mdInline(text: string): ReactNode {
     if (m.index > last) out.push(text.slice(last, m.index));
     const t = m[0];
     if (t.startsWith("**")) out.push(<strong key={k++}>{t.slice(2, -2)}</strong>);
+    else if (t.startsWith("*")) out.push(<em key={k++}>{t.slice(1, -1)}</em>);
     else if (t.startsWith("`")) out.push(<code key={k++}>{t.slice(1, -1)}</code>);
     else {
       const lm = t.match(/\[([^\]]+)\]\(([^)\s]+)\)/);

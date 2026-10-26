@@ -128,6 +128,183 @@ export func signals_payload(limit) {
   return { ok: true, date: last, count: len(out), signals: out };
 }
 
+// ============================================================================
+// 信号质量统计 + 今日精选 — 「个人投资价值」核心: 把 70+ 条规则从「信仰」
+// 变「证据」。历史战绩(180 天窗口函数, 单扫描条件聚合) + 大盘基准对照,
+// 让每条当日信号挂上「该信号历史 5 日胜率/平均收益」。
+// ============================================================================
+
+// 按统计行的「信号列前缀」取列组装信号历史行(SQL 动态列名 → 逐 get, 缺列不硬填)
+func sig_rec(x, sig, pre) {
+  let rec = { sig: sig, n: int(get(x, pre + "_n", 0)) };
+  let r1 = get(x, pre + "_r1", null);
+  if (r1 != null) { put(rec, "r1", r1); }
+  let r5 = get(x, pre + "_r5", null);
+  if (r5 != null) { put(rec, "r5", r5); }
+  let r10 = get(x, pre + "_r10", null);
+  if (r10 != null) { put(rec, "r10", r10); }
+  let w = get(x, pre + "_win", null);
+  if (w != null) { put(rec, "win5", w); }
+  return rec;
+}
+
+// xs 是否含 v(选择排序用的标记集; Lume list 不支持下标写, 排序只能重建)
+func in_list(xs, v) {
+  let i = 0;
+  while (i < len(xs)) {
+    if (xs[i] == v) { return true; }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- 信号历史战绩(180 天; lead() 窗口函数算 1/5/10 日后续收益)----
+// 一条 SQL 扫 8.5M 行 ~7.8s, 结果 30min 模块级缓存(数据 18:30 才变)。
+let STAT_CACHE = { exp: 0, data: null };
+
+export func signal_stats_payload() {
+  if (int(get(STAT_CACHE, "exp", 0)) >= now() and get(STAT_CACHE, "data", null) != null) {
+    return get(STAT_CACHE, "data", null);
+  }
+  let db = db_scan();
+  let q =
+    "select " +
+    "count(case when macd_cross=1 then 1 end) macd_n, " +
+    "avg(case when macd_cross=1 and c1 is not null then (c1-close)/close*100.0 end) macd_r1, " +
+    "avg(case when macd_cross=1 and c5 is not null then (c5-close)/close*100.0 end) macd_r5, " +
+    "avg(case when macd_cross=1 and c10 is not null then (c10-close)/close*100.0 end) macd_r10, " +
+    "100.0*sum(case when macd_cross=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when macd_cross=1 and c5 is not null then 1 end),0) macd_win, " +
+    "count(case when kdj_cross=1 then 1 end) kdj_n, " +
+    "avg(case when kdj_cross=1 and c1 is not null then (c1-close)/close*100.0 end) kdj_r1, " +
+    "avg(case when kdj_cross=1 and c5 is not null then (c5-close)/close*100.0 end) kdj_r5, " +
+    "avg(case when kdj_cross=1 and c10 is not null then (c10-close)/close*100.0 end) kdj_r10, " +
+    "100.0*sum(case when kdj_cross=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when kdj_cross=1 and c5 is not null then 1 end),0) kdj_win, " +
+    "count(case when rsi_oversold=1 then 1 end) rsi_n, " +
+    "avg(case when rsi_oversold=1 and c1 is not null then (c1-close)/close*100.0 end) rsi_r1, " +
+    "avg(case when rsi_oversold=1 and c5 is not null then (c5-close)/close*100.0 end) rsi_r5, " +
+    "avg(case when rsi_oversold=1 and c10 is not null then (c10-close)/close*100.0 end) rsi_r10, " +
+    "100.0*sum(case when rsi_oversold=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when rsi_oversold=1 and c5 is not null then 1 end),0) rsi_win, " +
+    "count(case when obv_signal=1 then 1 end) obv_n, " +
+    "avg(case when obv_signal=1 and c1 is not null then (c1-close)/close*100.0 end) obv_r1, " +
+    "avg(case when obv_signal=1 and c5 is not null then (c5-close)/close*100.0 end) obv_r5, " +
+    "avg(case when obv_signal=1 and c10 is not null then (c10-close)/close*100.0 end) obv_r10, " +
+    "100.0*sum(case when obv_signal=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when obv_signal=1 and c5 is not null then 1 end),0) obv_win, " +
+    "count(case when boll_position>1 then 1 end) boll_n, " +
+    "avg(case when boll_position>1 and c5 is not null then (c5-close)/close*100.0 end) boll_r5, " +
+    "100.0*sum(case when boll_position>1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when boll_position>1 and c5 is not null then 1 end),0) boll_win, " +
+    "count(case when williams_oversold=1 then 1 end) wil_n, " +
+    "avg(case when williams_oversold=1 and c5 is not null then (c5-close)/close*100.0 end) wil_r5, " +
+    "100.0*sum(case when williams_oversold=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when williams_oversold=1 and c5 is not null then 1 end),0) wil_win " +
+    "from (" +
+    "  select close, " +
+    "    lead(close,1)  over (partition by code order by date) c1, " +
+    "    lead(close,5)  over (partition by code order by date) c5, " +
+    "    lead(close,10) over (partition by code order by date) c10, " +
+    "    macd_cross, kdj_cross, rsi_oversold, obv_signal, williams_oversold, boll_position " +
+    "  from stock_analysis " +
+    "  where date >= date((select max(date) from stock_analysis), '-180 day') " +
+    ")";
+  let rows = sql_query(db, q, []);
+  if (len(rows) < 1) {
+    return { ok: false, reason: "信号统计查询失败", signals: [] };
+  }
+  let x = rows[0];
+  let sigs = [];
+  push(sigs, sig_rec(x, "MACD金叉", "macd"));
+  push(sigs, sig_rec(x, "KDJ金叉", "kdj"));
+  push(sigs, sig_rec(x, "RSI超卖", "rsi"));
+  push(sigs, sig_rec(x, "OBV放量", "obv"));
+  push(sigs, sig_rec(x, "突破布林上轨", "boll"));
+  push(sigs, sig_rec(x, "威廉超卖", "wil"));
+  put(STAT_CACHE, "exp", now() + 1800);
+  put(STAT_CACHE, "data", {
+    ok: true,
+    window: "180d",
+    ts: now(),
+    signals: sigs,
+    note: "胜率/平均收益 = 该信号历史 1/5/10 交易日后的价格变化(含全部事件, 未按个股去重); 仅描述历史, 不构成对未来有效的承诺",
+  });
+  return get(STAT_CACHE, "data", null);
+}
+
+// ---- 今日精选: 当日带信号票 × 量比 × 市值 综合打分, Top 8(10min 缓存)----
+let PICKS_CACHE = { exp: 0, data: null };
+
+export func picks_payload() {
+  if (int(get(PICKS_CACHE, "exp", 0)) >= now() and get(PICKS_CACHE, "data", null) != null) {
+    return get(PICKS_CACHE, "data", null);
+  }
+  let sig = signals_payload(999);
+  let picks = get(sig, "signals", []);
+  let out = { ok: true, date: get(sig, "date", null), picks: [], note: "当日无信号, 无精选" };
+  if (len(picks) > 0) {
+    // 批量补名称+量比+市值(asset_snapshot)
+    let db = db_asset();
+    let codes = [];
+    let i = 0;
+    while (i < len(picks)) {
+      let c = str(get(picks[i], "code", ""));
+      if (len(c) == 8) { push(codes, substr(c, 2)); }
+      i = i + 1;
+    }
+    let met = sql_query(db,
+      "select code, volume_ratio, total_market_value from asset_snapshot where code in ('" +
+      join(codes, "', '") + "')", []);
+    let metmap = {};
+    i = 0;
+    while (i < len(met)) {
+      put(metmap, str(get(met[i], "code", "")), met[i]);
+      i = i + 1;
+    }
+    // 打分: 信号数*200 + 量比*30(上限 3.0) + 市值 100-1000 亿*50
+    let ranked = [];
+    i = 0;
+    while (i < len(picks)) {
+      let c = str(get(picks[i], "code", ""));
+      let m = get(metmap, numeric_of(c), null);
+      let vr = m != null ? float(get(m, "volume_ratio", 0.0)) : 0.0;
+      let mv = m != null ? float(get(m, "total_market_value", 0.0)) : 0.0;
+      let score = len(get(picks[i], "signals", [])) * 200.0
+        + min(vr, 3.0) * 30.0
+        + (mv >= 100.0 and mv <= 1000.0 ? 50.0 : 0.0);
+      push(ranked, {
+        code: c,
+        name: get(picks[i], "name", ""),
+        close: get(picks[i], "close"),
+        change: get(picks[i], "change"),
+        signals: get(picks[i], "signals", []),
+        volume_ratio: vr > 0.0 ? vr : null,
+        market_value: mv > 0.0 ? mv : null,
+        score: score,
+      });
+      i = i + 1;
+    }
+    // 选择法取 Top 8: Lume 不支持 list 下标写(冒泡交换行不通), 每轮挑未选最大分
+    let used = [];
+    let picked = 0;
+    while (picked < 8 and picked < len(ranked)) {
+      let best = -1;
+      let bestscore = -1.0;
+      let q = 0;
+      while (q < len(ranked)) {
+        if (!in_list(used, q)) {
+          let s = float(get(ranked[q], "score", 0.0));
+          if (s > bestscore) { best = q; bestscore = s; }
+        }
+        q = q + 1;
+      }
+      if (best < 0) { break; }
+      push(out.picks, ranked[best]);
+      push(used, best);
+      picked = picked + 1;
+    }
+    out.note = "按「信号数×量比×市值」打分取 Top 8(信号=当日 ETL flag, 量比/市值=asset_snapshot 快照); 非收益预测";
+  }
+  put(PICKS_CACHE, "exp", now() + 600);
+  put(PICKS_CACHE, "data", out);
+  return out;
+}
+
 // ---- 规则筛选: POST filters map → 白名单字段 WHERE(列名固定, 值走 ? 占位, 杜绝注入) ----
 // 在 asset_snapshot(估值/量能字段, 含名称)上做; 未传 filters 返回量比前 limit 名。
 export func screen_payload(filters, limit) {
@@ -567,4 +744,12 @@ tool "realtime_quote", "查个股实时行情(现价/涨跌/开高低昨收/量�
 
 tool "market_indexes", "查四大指数实时点位(上证指数/深证成指/创业板指/沪深300, 30s 缓存)。", {}, (arg) => {
   return indexes_payload();
+};
+
+tool "signal_stats", "查各技术信号近 180 天历史战绩(触发次数/1·5·10 日平均收益/5 日胜率), 用于回答『金叉历史胜算如何』『超卖后平均跌多少』。窗口函数单扫 8.5M 行 ~8s, 服务端 30min 缓存。", {}, (arg) => {
+  return signal_stats_payload();
+};
+
+tool "daily_picks", "查今日精选: 当日带信号票按「信号数×量比×市值」打分取 Top 8, 附每只的量比/市值。10min 缓存。", {}, (arg) => {
+  return picks_payload();
 };

@@ -70,6 +70,15 @@ get "/api/meta", (req) => {
   return repo.meta_payload();
 };
 
+// ---- 信号历史战绩(180d 窗口函数, 首拉 ~8s, 30min 缓存) + 今日精选(10min 缓存)----
+// 「个人投资价值」核心: 把 ETL 规则从「信仰」变「证据」(每条信号挂历史 5 日胜率/平均收益)。
+get "/api/signal-stats", (req) => {
+  return repo.signal_stats_payload();
+};
+get "/api/daily-picks", (req) => {
+  return repo.picks_payload();
+};
+
 // ---- 实时行情: 腾讯 qt.gtimg.cn(免费文本源), 单票 15s 缓存 / 指数 30s 缓存。
 // 注: 字面量路由必须注册在动态段路由之前(当前 httpd 按注册顺序优先匹配,
 // 字面量 /indexes 若在后会被 :code 吞掉 —— 已踩坑, 顺序勿动)。
