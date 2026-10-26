@@ -20,7 +20,10 @@ services:
     container_name: lume-scanner
     restart: unless-stopped
     ports:
-      - "${PORT:-18094}:8094"
+      # 默认仅本机(127.0.0.1) — 容器内 Lume 绑 0.0.0.0 + 无 HTPASSWD, 若映射到
+      # 宿主 0.0.0.0 则局域网任何设备可匿名读全市场数据并消耗 LLM key 额度。
+      # 需局域网/外网共享时显式 PORT=0.0.0.0:18094 make docker-up 并配合 HTPASSWD_FILE。
+      - "127.0.0.1:${PORT:-18094}:8094"
     # 真实全量库只读挂载 (OrbStack/FUSE 原生, DELETE journal 无 -wal/-shm, ro 安全)
     volumes:
       - ${STOCKANALYZER_DATA:-/Users/erishen/Workspace/CNB/individular-invest/invest-kit/apps/stock-analyzer/data}:/app/data:ro

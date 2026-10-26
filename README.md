@@ -75,7 +75,12 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 
 ## 安全
 
-- 默认绑 `127.0.0.1`; 对外部署注入 `HTPASSWD_FILE` 开 Basic Auth(docker compose 绑 0.0.0.0, 对外须开)。
-- `sql_query` 物理只读 + SELECT-only 护栏; 本服务永不写库(docker 真实库挂载为 `:ro`)。
+- 默认绑 `127.0.0.1`; 对外部署注入 `HTPASSWD_FILE` 开 Basic Auth。docker compose 端口
+  默认映射 `127.0.0.1:18094`(仅本机) —— 容器内 Lume 自身绑 `0.0.0.0` 且无鉴权, 若映射到
+  宿主 `0.0.0.0`, 局域网任何设备即可匿名读全市场数据并消耗你的 `LLM_API_KEY` 额度;
+  需共享时显式 `PORT=0.0.0.0:18094 make docker-up` 并同时注入 `HTPASSWD_FILE`。
+- `sql_query` 物理只读 + SELECT-only 护栏; agent `read_file` 经 `resolve_within()`
+  锁在 web root(`www/`), 路径穿越拒绝; 本服务永不写库(docker 真实库挂载为 `:ro`)。
 - 实时行情只读公开行情源, 数据不外发; LLM 未配置时聊天降级离线引擎。
-- `.env` 含 LLM key, 不进 git; compose 经 env 插值注入容器。
+- `.env`(含 LLM key) 权限 600, 不进 git; 聊天会话 `.data/sessions/` 不进 git 也不进镜像。
+- 行情数据为交易所/行情商公开数据, 本项目为个人本地分析工具, 不收集任何用户个人数据。
