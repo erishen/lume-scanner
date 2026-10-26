@@ -11,6 +11,27 @@ import {
 import { ChatTab } from "./chat";
 
 type Tab = "signals" | "screen" | "stock" | "indicators" | "paper" | "chat" | "glossary" | "about";
+const TABS: [Tab, string][] = [
+  ["signals", "信号扫描"],
+  ["screen", "规则筛选"],
+  ["stock", "个股"],
+  ["indicators", "指标"],
+  ["paper", "模拟仓"],
+  ["chat", "AI 聊天"],
+  ["glossary", "字段说明"],
+  ["about", "数据源"],
+];
+
+// ---- 交易时段门控: 仅工作日 09:30-11:30 / 13:00-15:00(Asia/Shanghai)盘中轮询, 否则停 ----
+// 收盘后腾讯价已冻结, 继续 5s/30s 轮询只浪费且让用户误以为在动; 门控后停轮询并标注时段。
+// 跑在浏览器: 取 viewer 本地 new Date(), 换算成 UTC+8 墙钟(A股按沪市时区判定), 与 viewer 所在时区无关。
+function isTradingNow(now0 = new Date()): boolean {
+  const cst = new Date(now0.getTime() + 8 * 3600 * 1000);
+  const wd = cst.getUTCDay(); // 周一1 ... 周日0
+  if (wd === 0 || wd === 6) return false;
+  const mins = cst.getUTCHours() * 60 + cst.getUTCMinutes();
+  return (mins >= 570 && mins <= 690) || (mins >= 780 && mins <= 900);
+}
 
 // ---- 轻量 SVG 折线(null 值断开, 支持多序列)----
 function fmtAxis(v: number): string {
@@ -145,6 +166,15 @@ type Openers = { onStock: (code: string) => void; onInd: (code: string) => void 
 // ---- Tab 1: 全市场信号 ----
 function SignalsTab({ onStock, onInd }: Openers) {
   const [data, setData] = useState<SignalPayload | null>(null);
+  // 客户端信号类别筛选: 点 chip 只显示含该信号的行(多类别 OR); 纯前端零接口。
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const togg = (k: string) =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
   const [err, setErr] = useState("");
   useEffect(() => {
     fetchSignals(80).then(setData).catch((e) => setErr(String(e)));
@@ -152,6 +182,13 @@ function SignalsTab({ onStock, onInd }: Openers) {
   if (err) return <div className="err">加载失败: {err}</div>;
   if (!data) return <div className="kv">加载中…</div>;
   if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
+  // 汇总全部信号类别 + 计数; 选中时按 OR 过滤(行的 signals 含任一选中类别即保留)
+  const cats = new Map<string, number>();
+  for (const s of data.signals) for (const k of s.signals) cats.set(k, (cats.get(k) ?? 0) + 1);
+  const activeCats = sel.size ? Array.from(sel) : null;
+  const rows = activeCats
+    ? data.signals.filter((s) => s.signals.some((k) => sel.has(k)))
+    : data.signals;
   return (
     <>
       <IndexTicker />
@@ -159,12 +196,36 @@ function SignalsTab({ onStock, onInd }: Openers) {
       <StatsCard />
       <div className="card">
       <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "6px 0" }}>
+        <span className="dim" style={{ fontSize: 12 }}>筛选</span>
+        {[...cats.entries()].map(([k, c]) => (
+          <button
+            key={k}
+            className="ghost"
+            style={sel.has(k) ? { borderColor: "var(--up)", color: "var(--up)" } : {}}
+            onClick={() => togg(k)}
+          >
+            {k} · {c}
+          </button>
+        ))}
+        {sel.size > 0 && (
+          <button className="ghost" style={{ color: "var(--faint)" }} onClick={() => setSel(new Set())}>
+            清除({rows.length}/{data.count})
+          </button>
+        )}
+        {sel.size === 0 && <span className="dim" style={{ fontSize: 12 }}>· 点类别可筛选</span>}
+      </div>
       <table>
         <thead>
           <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI(ETL·Cutler)</th><th>RSI(Lume·Cutler)</th><th>RSI(Lume·Wilder)</th><th>一致性</th><th>信号</th><th>操作</th></tr>
         </thead>
         <tbody>
-          {data.signals.map((s) => (
+          {rows.length === 0 && (
+            <tr><td colSpan={10} className="dim" style={{ textAlign: "center", padding: 18 }}>
+              所选类别今日无命中 · <a style={{ color: "var(--up)", cursor: "pointer" }} onClick={() => setSel(new Set())}>清除筛选</a>
+            </td></tr>
+          )}
+          {rows.map((s) => (
             <tr key={s.code} className="rowlink" onClick={() => onStock(s.code)}>
               <td style={{ cursor: "pointer" }} title="点击看个股">{s.code}</td>
               <td className="name">{s.name || "—"}</td>
@@ -265,13 +326,19 @@ function ScreenTab({ onStock, onInd }: Openers) {
 // ---- 实时价卡(腾讯 qt.gtimg.cn 源; 5s 轮询, Lume 侧 15s 缓存; A 股红涨绿跌) ----
 function RealtimeCard({ code }: { code: string }) {
   const [rt, setRt] = useState<Realtime | null>(null);
+  const [trading, setTrading] = useState(isTradingNow);
+  useEffect(() => {
+    const c = setInterval(() => setTrading(isTradingNow()), 30000);
+    return () => clearInterval(c);
+  }, []);
   useEffect(() => {
     let live = true;
     const tick = () => fetchRealtime(code).then((d) => { if (live) setRt(d); }).catch(() => {});
     tick();
-    const t = setInterval(tick, 5000);
-    return () => { live = false; clearInterval(t); };
-  }, [code]);
+    // 非交易时段停止高频轮询(收盘后价已冻结), 仅在盘中 5s 刷新
+    const t = trading ? setInterval(tick, 5000) : null;
+    return () => { live = false; if (t) clearInterval(t); };
+  }, [code, trading]);
   if (!rt) return null;
   if (!rt.ok || rt.price == null) {
     return (
@@ -297,7 +364,7 @@ function RealtimeCard({ code }: { code: string }) {
         <span>开 {fmt2(rt.open)}</span><span>高 {fmt2(rt.high)}</span><span>低 {fmt2(rt.low)}</span>
         <span>昨收 {fmt2(rt.prev_close)}</span>
         <span>量 {rt.volume != null ? Math.round(rt.volume / 10000).toLocaleString() + " 万手" : "—"}</span>
-        <span className="dim">{rt.quote_time ? fmtT(rt.quote_time) : ""} · 5s 刷新</span>
+        <span className="dim">{rt.quote_time ? fmtT(rt.quote_time) : ""} · {trading ? "5s 刷新" : "非交易时段已停刷新"}</span>
       </div>
     </div>
   );
@@ -309,16 +376,21 @@ function fmtT(yyyymmddHHMMSS?: string) {
   return `${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(8, 10)}:${s.slice(10, 12)}:${s.slice(12, 14)}`;
 }
 
-// ---- 四大指数条(30s 轮询; 信号页顶部) ----
+// ---- 四大指数条(30s 轮询; 信号页顶部; 非交易时段停止刷新并标注) ----
 function IndexTicker() {
   const [ix, setIx] = useState<RealtimeIndexes | null>(null);
+  const [trading, setTrading] = useState(isTradingNow);
+  useEffect(() => {
+    const c = setInterval(() => setTrading(isTradingNow()), 30000);
+    return () => clearInterval(c);
+  }, []);
   useEffect(() => {
     let live = true;
     const tick = () => fetchIndexes().then((d) => { if (live) setIx(d); }).catch(() => {});
     tick();
-    const t = setInterval(tick, 30000);
-    return () => { live = false; clearInterval(t); };
-  }, []);
+    const t = trading ? setInterval(tick, 30000) : null;
+    return () => { live = false; if (t) clearInterval(t); };
+  }, [trading]);
   if (!ix || !ix.indexes.length) return null;
   return (
     <div className="ticker">
@@ -332,6 +404,11 @@ function IndexTicker() {
           </div>
         );
       })}
+      {!trading && (
+        <div className="ticker-item" style={{ borderColor: "var(--faint)" }} title="工作日 09:30-11:30 / 13:00-15:00 外停止刷新">
+          <span className="dim">已定格 · 非交易时段</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -926,28 +1003,51 @@ function AboutTab() {
 }
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("signals");
+  // 深链: #/tab[/code] — 刷新保留状态、可分享定位(如 #/indicators/sh600519)。
+  const parseHash = (): Tab => {
+    const h = (typeof location !== "undefined" ? location.hash : "").replace(/^#\/?/, "");
+    const seg = h.split("/")[0];
+    const valid: string[] = TABS.map(([t]) => t);
+    return (valid.includes(seg) ? seg : "signals") as Tab;
+  };
+  const initFocus = (): string => {
+    const h = (typeof location !== "undefined" ? location.hash : "").replace(/^#\/?/, "");
+    const segs = h.split("/");
+    return segs[1] && /^\w{6,8}$/.test(segs[1]) ? segs[1] : "";
+  };
+  const [tab, setTab] = useState<Tab>(parseHash);
   const [meta, setMeta] = useState<Meta | null>(null);
   // 共享的「当前个股」: 个股页与指标页互相跟随。
   // - 从信号/筛选点入: 设为该代码并切 tab;
   // - 在某页手动查询/计算后, 回写 focus, 另一页切过来时自动展示同一只票。
-  const [focus, setFocus] = useState("");
+  const [focus, setFocus] = useState<string>(initFocus);
   useEffect(() => { fetchMeta().then(setMeta).catch(() => {}); }, []);
+  // tab/focus 变化 → 同步 URL hash(replaceState 不堆叠历史)
+  useEffect(() => {
+    const codePart = (tab === "stock" || tab === "indicators") && focus ? "/" + focus : "";
+    const next = "#/" + tab + codePart;
+    if (location.hash !== next) {
+      try { history.replaceState(null, "", next); } catch {}
+    }
+  }, [tab, focus]);
+  // 支持浏览器前进/后退: hashchange → 回读
+  useEffect(() => {
+    const onHash = () => {
+      const t = parseHash();
+      setTab(t);
+      const h = location.hash.replace(/^#\/?/, "");
+      const code = h.split("/")[1];
+      setFocus(code && /^\w{6,8}$/.test(code) ? code : "");
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const goTab = (t: Tab) => { setTab(t); };
   const openStock = (code: string) => { setFocus(code); setTab("stock"); };
   const openInd = (code: string) => { setFocus(code); setTab("indicators"); };
   // 某页手动操作后回调: 更新共享 focus(若与该页 seed 相同, 页面内 lastAuto 守卫会跳过重载)
   const query = (code: string) => setFocus(code);
-  const tabs: [Tab, string][] = [
-    ["signals", "信号扫描"],
-    ["screen", "规则筛选"],
-    ["stock", "个股"],
-    ["indicators", "指标"],
-    ["paper", "模拟仓"],
-    ["chat", "AI 聊天"],
-    ["glossary", "字段说明"],
-    ["about", "数据源"],
-  ];
-  const active = useMemo(() => tabs.find(([t]) => t === tab)?.[1] ?? "", [tab]);
+  const active = useMemo(() => TABS.find(([t]) => t === tab)?.[1] ?? "", [tab]);
   return (
     <div className="app">
       <div className="hero">
@@ -955,8 +1055,8 @@ export function App() {
         <div className="meta">{meta?.latest_date ? `数据截至 ${meta.latest_date}` : "加载中"}</div>
       </div>
       <div className="tabs">
-        {tabs.map(([t, label]) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{label}</button>
+        {TABS.map(([t, label]) => (
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => goTab(t)}>{label}</button>
         ))}
       </div>
       <div style={{ marginTop: 14 }}>

@@ -553,6 +553,54 @@ export func realtime_payload(code) {
   return rec;
 }
 
+// ---- 批量实时行情: 1 个 http_get 拉 N 只(腾讯 q=a,b,c 逗号拼接) ----
+// 替代逐票串行(N 次请求), paper_payload 12 只持仓 0.9s → ~80ms。
+// 响应: v_sh601811="1~名~601811~现价~...";v_sz002811="2~..."; 以 ; 分隔多条全量报价,
+// 字段下标与单票 realtime_payload 完全一致(f[3]=现价/f[4]=昨收/f[31]=涨跌/f[32]=涨跌%/...)。
+export func realtime_batch(codes) {
+  let out = {};
+  if (len(codes) == 0) { return { ok: true, quotes: out, ts: now() }; }
+  let qs = [];
+  let qi = 0;
+  while (qi < len(codes)) {
+    let q = norm_code(str(codes[qi]));
+    if (!in_list(qs, q)) { push(qs, q); }
+    qi = qi + 1;
+  }
+  let url = "http://qt.gtimg.cn/q=" + join(qs, ",");
+  let r = http_get(url, { timeout: 6.0 });
+  let body = str(get(r, "body", ""));
+  if (!get(r, "ok", false) or len(body) < 20) {
+    return { ok: false, reason: "批量实时获取失败: " + str(substr(str(get(r, "err", "")), 0, 40)), quotes: out };
+  }
+  let recs = split(body, ";");
+  let j = 0;
+  while (j < len(recs)) {
+    let rec = trim(str(recs[j]));
+    if (contains(rec, "v_") and contains(rec, "\"")) {
+      let parts = split(rec, "\"");
+      let q0 = trim(str(get(parts, 0, "")));
+      let code = substr(str(split(q0, "=")[0]), 2);   // "v_sh601811=" → "sh601811"
+      let data = split(str(get(parts, 1, "")), "~");
+      let qm = {
+        price: rt_num(get(data, 3, "")),
+        prev_close: rt_num(get(data, 4, "")),
+        open: rt_num(get(data, 5, "")),
+        high: rt_num(get(data, 33, "")),
+        low: rt_num(get(data, 34, "")),
+        change: rt_num(get(data, 31, "")),
+        change_pct: rt_num(get(data, 32, "")),
+        volume: rt_num(get(data, 36, "")),
+        amount: rt_num(get(data, 37, "")),
+        quote_time: str(get(data, 30, "")),
+      };
+      put(out, code, qm);
+    }
+    j = j + 1;
+  }
+  return { ok: true, quotes: out, ts: now() };
+}
+
 // ---- 四大指数(30s 缓存); 信号页指数条 30s 轮询 ----
 // 短报价 s_ 记录: ~分隔 [1]=名称(GBK 弃用), [2]=代码, [3]=点位, [4]=涨跌, [5]=涨跌%
 let IDX_URL = "http://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006,s_sh000300";
@@ -780,14 +828,17 @@ export func paper_payload() {
   let init = float(get(d, "initial_capital", 100000));
   let posmap = get(d, "positions", {});
   let ks = keys(posmap);
+  // 批量取全部持仓现价: 1 个 http_get(腾讯 q=多票逗号拼接), 取代逐票 12 次串行。
+  let quotes = get(realtime_batch(ks), "quotes", {});
   let positions = [];
   let mtm = 0.0;
   let i = 0;
   while (i < len(ks)) {
     let code = str(ks[i]);
     let p = get(posmap, code, {});
-    let rt = realtime_payload(code);
-    let price = get(rt, "price", null);
+    let rt = get(quotes, code, null);
+    let rt0 = (rt != null) ? rt : {};
+    let price = get(rt0, "price", null);
     let row = {
       code: code,
       name: str(get(p, "name", "")),
@@ -798,8 +849,8 @@ export func paper_payload() {
       take_profit: float(get(p, "take_profit", 0)),
       reason: str(get(p, "reason", "")),
       price: price,
-      realtime_ok: get(rt, "ok", false),
-      suspended: get(rt, "suspended", false),
+      realtime_ok: get(rt0, "ok", (price != null)),
+      suspended: get(rt0, "suspended", false),
       cost: paper_cost(p),
       upnl: paper_upnl(p, price),
       upnl_pct: paper_upnl_pct(p, price),
