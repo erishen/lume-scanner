@@ -1,0 +1,14 @@
+# lume-scanner/.dockerignore — context 根 = work/lume/lume-scanner/
+# app 镜像只需: scanner.lume + src/ + www/(已构建) + .data/(样例 fallback)。
+# 数据不进镜像(真实库 compose bind-mount 只读); 秘密走 env_file, 不进镜像。
+
+# 依赖 / 元数据 / 生成物
+node_modules/
+.git/
+logs/
+*.log
+.work-sc/
+skills/            # Lume 启动时 llm-router 自动生成
+.env              # 秘密, compose 用 env_file 注入
+
+# 构建产物 www/ 需要(容器无 node 重编), 但其 node_modules 软链已在上排除

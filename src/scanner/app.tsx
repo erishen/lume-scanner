@@ -26,7 +26,9 @@ function Lines({ data, labels, w = 720, h = 160, min, max }: {
   const lo = min ?? Math.min(...all);
   const hi = max ?? Math.max(...all);
   const span = hi - lo || 1;
-  const n = data[0]?.length ?? 0;
+  // 公共 x 轴 = 最长序列长度; 短序列(前导 NaN 已被服务端剥掉)按「右对齐」画,
+  // 使 ma5/ma20 等尾端与价格线对齐到同一最新交易日, 不再整体左移(消除错位)。
+  const n = Math.max(...data.map((s) => s.length));
   const px = (i: number) => (n > 1 ? (i / (n - 1)) * (w - 56) + 48 : w / 2);
   const py = (v: number) => h - 24 - ((v - lo) / span) * (h - 36);
   const colors = ["#58a6ff", "#f85149", "#3fb950", "#d29922"];
@@ -45,12 +47,14 @@ function Lines({ data, labels, w = 720, h = 160, min, max }: {
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w, background: "transparent" }}>
       {grid}
       {data.map((series, si) => {
+        // 右对齐: 短序列(前导 NaN 被剥)尾端对齐最新交易日, x 偏移 = n - 序列长度。
+        const off = n - series.length;
         // 分段(null 断开)
         let path = "";
         let pen = false;
         series.forEach((v, i) => {
           if (v == null) { pen = false; return; }
-          path += (pen ? "L" : "M") + px(i).toFixed(1) + " " + py(v).toFixed(1) + " ";
+          path += (pen ? "L" : "M") + px(i + off).toFixed(1) + " " + py(v).toFixed(1) + " ";
           pen = true;
         });
         return <path key={si} d={path} fill="none" stroke={colors[si % colors.length]} strokeWidth={1.5} />;

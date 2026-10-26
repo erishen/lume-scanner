@@ -70,6 +70,29 @@ REAL_DATA ?= ../../../invest-kit/apps/stock-analyzer/data
 # agent 工具白名单(本地只读 3 个 + SQL introspect + 基础工具, 不放行 sql_write)
 SCANNER_TOOLS ?= scan_signals,screen_stocks,stock_kline,sql_query,sql_tables,sql_schema,read_file,get_time
 
+# Docker 构建/运行 (OrbStack daemon; 沙箱无 DOCKER_HOST 时由宿主终端跑)
+# 基座: 容器内重编当前宿主 lume/ C 源码(带 #54/#55 内建, 非老 v0.6.3), 静态 Linux bin/lume。
+# app:  基座 + scanner.lume/src/www/样例 .data。真实库不进镜像, compose 只读挂载。
+DOCKER ?= docker
+
+docker: docker-base docker-app
+	@echo "▶ docker 镜像已就绪, 起容器: $(DOCKER) compose up -d  (http://127.0.0.1:$(PORT))"
+
+docker-base:
+	@echo "▶ build 基座 erishen/lume-scanner-base (容器内重编 C, 约 1-3min)"
+	@cd ../ && $(DOCKER) build -f lume/Dockerfile.scanner -t erishen/lume-scanner-base lume/
+
+docker-app:
+	@echo "▶ build app erishen/lume-scanner"
+	@cd ../ && $(DOCKER) build -f lume-scanner/Dockerfile -t erishen/lume-scanner lume-scanner/
+
+docker-up:
+	@$(DOCKER) compose up -d
+	@echo "▶ 已起容器; 日志: $(DOCKER) compose logs -f  |  端口: 127.0.0.1:$(PORT)"
+
+docker-down:
+	@$(DOCKER) compose down
+
 real: stop check
 	@echo "▶ http://127.0.0.1:$(PORT)  (make real: 真实 stock-analyzer 全量库, 工具白名单已注入)"
 	@echo "  SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db"
@@ -89,4 +112,4 @@ dev: stop check sample-data
 	@echo "▶ esbuild watch 后台运行;Ctrl-C 停服务(make stop 清残留 watch)"
 	@$(LUME) scanner.lume
 
-.PHONY: default dev stop check typecheck sample-data ui ui-dev watch
+.PHONY: default dev stop check typecheck sample-data ui ui-dev watch docker docker-base docker-app docker-up docker-down
