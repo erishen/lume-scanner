@@ -81,6 +81,20 @@ CREATE TABLE IF NOT EXISTS asset_snapshot (
 );
 """
 
+# 热门票(常查/演示用)始终进样例库, 其余名额按真实库顺序补齐到 --codes
+POPULAR = [
+    "sh600519",  # 贵州茅台
+    "sh601318",  # 中国平安
+    "sh600036",  # 招商银行
+    "sz000001",  # 平安银行
+    "sz000002",  # 万科A
+    "sz000651",  # 格力电器
+    "sz000858",  # 五粮液
+    "sz002594",  # 比亚迪
+    "sz300750",  # 宁德时代
+    "sh601012",  # 隆基绿能
+]
+
 def build_stock(src_db, out_db, n_dates, n_codes):
     con_s = sqlite3.connect(src_db)
     dates = [r[0] for r in con_s.execute(
@@ -88,8 +102,14 @@ def build_stock(src_db, out_db, n_dates, n_codes):
     if not dates:
         con_s.close(); return False
     since = dates[-1]
-    codes = [r[0] for r in con_s.execute(
-        "SELECT DISTINCT code FROM stock_analysis WHERE date >= ? LIMIT ?", (since, n_codes))]
+    available = {r[0] for r in con_s.execute(
+        "SELECT DISTINCT code FROM stock_analysis WHERE date >= ?", (since,))}
+    # 热门票优先(在库的才保留), 再按库内顺序补齐到 n_codes
+    codes = [c for c in POPULAR if c in available]
+    fill = [r[0] for r in con_s.execute(
+        "SELECT DISTINCT code FROM stock_analysis WHERE date >= ? ORDER BY code "
+        "LIMIT ?", (since, n_codes)) if r[0] not in set(codes)]
+    codes.extend(fill[:max(0, n_codes - len(codes))])
     rows = []
     for c in codes:
         rows.extend(con_s.execute(
