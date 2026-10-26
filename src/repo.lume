@@ -14,6 +14,33 @@ func db_asset() {
   return p;
 }
 
+// ---- 名称查找: asset_snapshot(asset.db) 用纯 6 位数字 code; 股票库侧带 sh/sz/bj 前缀, 先去掉 ----
+func numeric_of(prefixed) {
+  let s = str(prefixed);
+  if (len(s) == 8) { return substr(s, 2); }
+  return s;
+}
+
+// codes: 带前缀代码列表 → map(数字代码 → 名称); 一条 IN 查询批量取, 取不到的名称为空串。
+func names_map(codes) {
+  let nums = [];
+  let i = 0;
+  while (i < len(codes)) { push(nums, numeric_of(codes[i])); i = i + 1; }
+  let by_num = {};
+  if (len(nums) == 0) { return by_num; }
+  let marks = [];
+  i = 0;
+  while (i < len(nums)) { push(marks, "?"); i = i + 1; }
+  let rows = sql_query(db_asset(),
+    "select code, name from asset_snapshot where code in (" + join(marks, ",") + ")", nums);
+  i = 0;
+  while (i < len(rows)) {
+    put(by_num, str(get(rows[i], "code", "")), str(get(rows[i], "name", "")));
+    i = i + 1;
+  }
+  return by_num;
+}
+
 // ---- 数据源元信息(最新交易日/标的数/行数) ----
 export func meta_payload() {
   let db = db_scan();
@@ -73,6 +100,16 @@ export func signals_payload(limit) {
     }
     i = i + 1;
   }
+  // 给命中的标的补名称(asset_snapshot 按数字代码 IN 批量查一次; 未命中的走原路径不受影响)
+  let codes = [];
+  let k = 0;
+  while (k < len(out)) { push(codes, get(out[k], "code")); k = k + 1; }
+  let names = names_map(codes);
+  k = 0;
+  while (k < len(out)) {
+    put(out[k], "name", get(names, numeric_of(get(out[k], "code", "")), ""));
+    k = k + 1;
+  }
   return { ok: true, date: last, count: len(out), signals: out };
 }
 
@@ -128,7 +165,12 @@ export func stock_payload(code, days) {
   let asc = [];
   let i = len(rows) - 1;
   while (i >= 0) { push(asc, rows[i]); i = i - 1; }
-  return { ok: true, code: c, days: len(asc), series: asc };
+  let names = names_map([c]);
+  return {
+    ok: true, code: c,
+    name: get(names, numeric_of(c), ""),
+    days: len(asc), series: asc,
+  };
 }
 
 // ---- 二期(#54): 实时技术指标 — 只读原始 OHLCV, 用 Lume 内建现算, 不依赖 Python ETL 列 ----
@@ -182,8 +224,10 @@ export func indicators_payload(code, days, period) {
   while (i >= 0) { push(asc, rows[i]); i = i - 1; }
   let n = len(asc);
   let dates = str_col_of(asc, "date");
+  let names = names_map([c]);
+  let nm = get(names, numeric_of(c), "");
   if (n < 2) {
-    return { ok: true, code: c, days: n, period: p, dates: dates, note: "数据不足(至少 2 日)",
+    return { ok: true, code: c, name: nm, days: n, period: p, dates: dates, note: "数据不足(至少 2 日)",
             kdj: null, williams_r: null, atr: null, obv: null };
   }
   let highs = col_of(asc, "high");
@@ -193,7 +237,7 @@ export func indicators_payload(code, days, period) {
   let kd = kdj(highs, lows, closes, p);
   let cut = p - 1;
   return {
-    ok: true, code: c, days: n, period: p, dates: dates,
+    ok: true, code: c, name: nm, days: n, period: p, dates: dates,
     kdj: {
       rsv: clean_list(get(kd, "rsv", []), cut),
       k: clean_list(get(kd, "k", []), cut),

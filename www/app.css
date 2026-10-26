@@ -19,7 +19,8 @@ button.primary { background: #1f6feb; color: #fff; border: 0; border-radius: 8px
 button.primary:disabled { opacity: .5; }
 .kv { margin-top: 10px; color: #8b949e; font-size: 13px; }
 .series { max-height: 420px; overflow: auto; border: 1px solid #30363d; border-radius: 10px; margin-top: 14px; }
-.note { color: #8b949e; font-size: 12px; margin-top: 8px; }
+.name { color: #e6edf3; font-weight: 600; white-space: nowrap; }
+.name .code { color: #8b949e; font-weight: 400; }
 .err { color: #f85149; font-size: 13px; margin-top: 10px; }
 /* AI 聊天 tab */
 .chatbox { border: 1px solid #30363d; border-radius: 10px; margin-top: 14px; }

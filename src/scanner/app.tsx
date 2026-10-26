@@ -80,12 +80,13 @@ function SignalsTab() {
       <div className="kv">截至 {data.date} · 共 {data.count} 只带信号</div>
       <table>
         <thead>
-          <tr><th>代码</th><th>收盘</th><th>涨跌%</th><th>RSI</th><th>信号</th></tr>
+          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI</th><th>信号</th></tr>
         </thead>
         <tbody>
           {data.signals.map((s) => (
             <tr key={s.code}>
               <td>{s.code}</td>
+              <td className="name">{s.name || "—"}</td>
               <td><Num v={s.close} /></td>
               <td className={cls(s.change)}><Num v={s.change} /></td>
               <td><Num v={s.rsi} /></td>
@@ -180,7 +181,7 @@ function StockTab() {
       {err && <div className="err">{err}</div>}
       {data && data.days > 0 && (
         <>
-          <div className="kv">{data.code} · 近 {data.days} 个交易日(升序)</div>
+          <div className="kv"><span className="name">{data.name ? `${data.name} ` : ""}{data.code}</span> · 近 {data.days} 个交易日(升序)</div>
           <div className="series">
             <table>
               <thead>
@@ -238,7 +239,7 @@ function IndicatorsTab() {
         <button className="primary" type="submit" disabled={loading}>{loading ? "…" : "计算"}</button>
       </form>
       <div className="kv">Lume 内建现算(读原始 high/low/close/volume, 不依赖 Python ETL 指标列)。
-        {data ? ` 数据截至 ${data.dates[data.dates.length - 1] ?? "—"} · ${data.days} 日 · 周期 ${data.period}` : ""}</div>
+        {data ? ` ${data.name ? data.name + " " : ""}${data.code} · 数据截至 ${data.dates[data.dates.length - 1] ?? "—"} · ${data.days} 日 · 周期 ${data.period}` : ""}</div>
       {err && <div className="err">{err}</div>}
       {data?.note && <div className="kv">{data.note}</div>}
       {data && data.kdj && (

@@ -3,6 +3,7 @@
 
 export interface SignalRow {
   code: string;
+  name: string;
   close: number;
   change: number;
   rsi: number;
@@ -53,6 +54,7 @@ export interface KlineRow {
 export interface StockPayload {
   ok: boolean;
   code: string;
+  name?: string;
   days: number;
   series: KlineRow[];
 }
@@ -69,6 +71,7 @@ export interface Meta {
 export interface IndicatorsPayload {
   ok: boolean;
   code: string;
+  name?: string;
   days: number;
   period: number;
   dates: string[];
