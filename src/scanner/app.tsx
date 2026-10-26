@@ -416,6 +416,12 @@ function StatsCard() {
 }
 
 // ---- 数据新鲜度 (K线/资产快照/模拟仓 时间戳 + 前端算滞后天数, 一眼看出哪份数据停了) ----
+// ISO 时间戳展示: 去掉 "T" 分隔符 (2026-10-26T19:55:21 → 2026-10-26 19:55:21)
+function fmtTs(s: string | null | undefined, noTime = false): string {
+  if (!s) return "—";
+  const t = s.replace("T", " ");
+  return noTime ? t.slice(0, 10) : t;
+}
 function freshLag(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const t = new Date(iso).getTime();
@@ -435,10 +441,10 @@ export function FreshnessCard() {
   const [fr, setFr] = useState<Freshness | null>(null);
   useEffect(() => { fetchFreshness().then(setFr).catch(() => {}); }, []);
   if (!fr || !fr.ok) return null;
-  const rows: [string, string, string | null, string][] = [
+  const rows: [string, string, string, string][] = [
     ["日 K / ETL 主库", "最新交易日", fr.analysis_latest ?? "—", fr.analysis_latest ?? ""],
-    ["资产快照", "updated_at", fr.snapshot_updated_at ?? "—", fr.snapshot_updated_at ?? ""],
-    ["模拟仓", "updated_at", fr.paper_updated_at ?? "—(未找到)", fr.paper_updated_at ?? ""],
+    ["资产快照", "updated_at", fmtTs(fr.snapshot_updated_at), fr.snapshot_updated_at ?? ""],
+    ["模拟仓", "updated_at", fmtTs(fr.paper_updated_at), fr.paper_updated_at ?? ""],
   ];
   return (
     <div className="card" style={{ marginBottom: 12 }}>
@@ -475,7 +481,7 @@ function PaperTab({ onStock }: Openers) {
   return (
     <>
       <div className="card">
-        <h3>模拟仓总览 <span>· 更新 {pk.updated_at} · 已平仓 {pk.closed ?? 0} 笔 · 挂单 {pk.pending?.length ?? 0}</span></h3>
+        <h3>模拟仓总览 <span>· 更新 {fmtTs(pk.updated_at)} · 已平仓 {pk.closed ?? 0} 笔 · 挂单 {pk.pending?.length ?? 0}</span></h3>
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 6 }}>
           {[
             ["初始资金", (pk.initial_capital ?? 0).toLocaleString(), ""],
