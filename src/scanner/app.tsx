@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   fetchMeta, fetchSignals, fetchScreen, fetchStock, fetchIndicators,
@@ -235,20 +235,31 @@ function ScreenTab({ onStock, onInd }: Openers) {
 }
 
 // ---- Tab 3: 个股 K 线 + 指标 ----
-function StockTab({ seed }: { seed?: string }) {
+// seed: 共享的「当前个股」(与指标页跟随); onQuery: 本页手动查询后上报, 供指标页跟随
+function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
   const [code, setCode] = useState("sh600519");
   const [days, setDays] = useState("120");
   const [data, setData] = useState<StockPayload | null>(null);
   const [err, setErr] = useState("");
+  const lastAuto = useRef("");
 
   const load = (c: string, d: string) => {
     setErr("");
     fetchStock(c, Number(d)).then(setData).catch((e) => setErr(String(e)));
   };
-  const submit = (e: React.FormEvent) => { e.preventDefault(); load(code, days); };
-  // 从其它 tab 跳入: seed 变化时带入代码并自动查询
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    load(code, days);
+    lastAuto.current = code;   // 避免 onQuery 回写 seed 触发 effect 重复加载
+    onQuery?.(code);
+  };
+  // 共享 seed 变化(从指标页/信号页跟过来): 带入代码并自动查询
   useEffect(() => {
-    if (seed) { setCode(seed); load(seed, days); }
+    if (seed && seed !== lastAuto.current) {
+      lastAuto.current = seed;
+      setCode(seed);
+      load(seed, days);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed]);
 
@@ -301,13 +312,15 @@ function StockTab({ seed }: { seed?: string }) {
 }
 
 // ---- Tab 4: 实时技术指标(Lume 内建现算)----
-function IndicatorsTab({ seed }: { seed?: string }) {
+// seed: 共享的「当前个股」(与个股页跟随); onQuery: 本页手动计算后上报, 供个股页跟随
+function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
   const [code, setCode] = useState("sh600519");
   const [days, setDays] = useState("200");
   const [period, setPeriod] = useState("9");
   const [data, setData] = useState<IndicatorsPayload | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const lastAuto = useRef("");
 
   const load = (c?: string) => {
     const target = c ?? code;
@@ -318,15 +331,24 @@ function IndicatorsTab({ seed }: { seed?: string }) {
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   };
-  // 从其它 tab 跳入: seed 变化时带入代码并自动计算(显式传 seed, 避开闭包读到旧 code)
+  // 共享 seed 变化(从个股页/信号页跟过来): 带入代码并自动计算(显式传 seed 避开闭包旧值)
   useEffect(() => {
-    if (seed) { setCode(seed); load(seed); }
+    if (seed && seed !== lastAuto.current) {
+      lastAuto.current = seed;
+      setCode(seed);
+      load(seed);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed]);
+  const submitInd = () => {
+    load();
+    lastAuto.current = code;   // 本页手动算过, 记录以区分 seed 自动跟随
+    onQuery?.(code);
+  };
 
   return (
     <>
-      <form className="filters" onSubmit={(e) => { e.preventDefault(); load(); }}>
+      <form className="filters" onSubmit={(e) => { e.preventDefault(); submitInd(); }}>
         <label>代码 <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="sh600519 / 600519" /></label>
         <label>天数 <input value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 70 }} /></label>
         <label>KDJ/ATR 周期 <input value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: 70 }} /></label>
@@ -393,7 +415,7 @@ function IndicatorsTab({ seed }: { seed?: string }) {
             <div className="chart-card">
               <div className="chart-title"><div>Williams %R<span>period {data.period}</span></div></div>
               <Legend labels={["Williams %R"]} />
-              <Lines data={[data.williams_r]} labels={["Williams %R"]} min={-100} max={100} />
+              <Lines data={[data.williams_r]} labels={["Williams %R"]} min={-100} max={0} />
             </div>
             <div className="chart-card">
               <div className="chart-title"><div>ATR<span>period {data.period}</span></div></div>
@@ -434,12 +456,15 @@ function AboutTab() {
 export function App() {
   const [tab, setTab] = useState<Tab>("signals");
   const [meta, setMeta] = useState<Meta | null>(null);
-  // 跨 tab 跳转: 记录最近从「信号/筛选」点进个股/指标的代码, 目标 tab 挂载时自动加载
-  const [stockSeed, setStockSeed] = useState("");
-  const [indSeed, setIndSeed] = useState("");
+  // 共享的「当前个股」: 个股页与指标页互相跟随。
+  // - 从信号/筛选点入: 设为该代码并切 tab;
+  // - 在某页手动查询/计算后, 回写 focus, 另一页切过来时自动展示同一只票。
+  const [focus, setFocus] = useState("");
   useEffect(() => { fetchMeta().then(setMeta).catch(() => {}); }, []);
-  const openStock = (code: string) => { setStockSeed(code); setTab("stock"); };
-  const openInd = (code: string) => { setIndSeed(code); setTab("indicators"); };
+  const openStock = (code: string) => { setFocus(code); setTab("stock"); };
+  const openInd = (code: string) => { setFocus(code); setTab("indicators"); };
+  // 某页手动操作后回调: 更新共享 focus(若与该页 seed 相同, 页面内 lastAuto 守卫会跳过重载)
+  const query = (code: string) => setFocus(code);
   const tabs: [Tab, string][] = [
     ["signals", "信号扫描"],
     ["screen", "规则筛选"],
@@ -463,8 +488,8 @@ export function App() {
       <div style={{ marginTop: 14 }}>
         {tab === "signals" && <SignalsTab onStock={openStock} onInd={openInd} />}
         {tab === "screen" && <ScreenTab onStock={openStock} onInd={openInd} />}
-        {tab === "stock" && <StockTab seed={stockSeed} />}
-        {tab === "indicators" && <IndicatorsTab seed={indSeed} />}
+        {tab === "stock" && <StockTab seed={focus} onQuery={query} />}
+        {tab === "indicators" && <IndicatorsTab seed={focus} onQuery={query} />}
         {tab === "chat" && <ChatTab />}
         {tab === "about" && <AboutTab />}
       </div>
