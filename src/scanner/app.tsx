@@ -168,6 +168,7 @@ function SignalsTab({ onStock, onInd }: Openers) {
   const [data, setData] = useState<SignalPayload | null>(null);
   // 客户端信号类别筛选: 点 chip 只显示含该信号的行(多类别 OR); 纯前端零接口。
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [minSig, setMinSig] = useState(2); // 共振度阈值: 默认只看同时命中≥2个信号的票
   const togg = (k: string) =>
     setSel((s) => {
       const n = new Set(s);
@@ -177,8 +178,9 @@ function SignalsTab({ onStock, onInd }: Openers) {
     });
   const [err, setErr] = useState("");
   useEffect(() => {
-    fetchSignals(80).then(setData).catch((e) => setErr(String(e)));
-  }, []);
+    setSel(new Set());
+    fetchSignals(80, minSig).then(setData).catch((e) => setErr(String(e)));
+  }, [minSig]);
   if (err) return <div className="err">加载失败: {err}</div>;
   if (!data) return <div className="kv">加载中…</div>;
   // total=全市场带信号总数(未截断), 老后端无 total 时降级为 count
@@ -195,16 +197,30 @@ function SignalsTab({ onStock, onInd }: Openers) {
   const rows = activeCats
     ? data.signals.filter((s) => s.signals.some((k) => sel.has(k)))
     : data.signals;
-  const truncated = total > data.count;
   return (
     <>
       <IndexTicker />
       <PicksCard onStock={onStock} onInd={onInd} />
       <StatsCard />
       <div className="card">
-      <h3>截至 {data.date} · 全市场 {total} 只带信号{truncated ? <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}> · 显示前 {data.count} 条</span> : null} <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
+      <h3>截至 {data.date} · 全市场 {total} 只带信号 · 当前显示前 {data.count} 条(按共振度降序)</h3>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "6px 0" }}>
-        <span className="dim" style={{ fontSize: 12 }}>筛选</span>
+        <span className="dim" style={{ fontSize: 12 }}>共振度</span>
+        {[1, 2, 3, 4, 5].map((m) => {
+          const d = data.dist;
+          const c = m === 1 ? total : m === 2 ? (d?.g2 ?? 0) : m === 3 ? (d?.g3 ?? 0) : m === 4 ? (d?.g4 ?? 0) : (d?.g5 ?? 0);
+          return (
+            <button key={m} className="ghost"
+              style={minSig === m ? { borderColor: "var(--up)", color: "var(--up)" } : {}}
+              onClick={() => setMinSig(m)}>
+              ≥{m}{c > 0 ? ` · ${c}` : ""}
+            </button>
+          );
+        })}
+        <span className="dim" style={{ fontSize: 12, marginLeft: 4 }} title="同时命中≥N个信号的股票数(全市场, SQL 条件聚合)。≥1 占 83% 无信息量, 共振 ≥2/≥3 才有筛选价值">· 单信号无信息量, 看共振</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "6px 0" }}>
+        <span className="dim" style={{ fontSize: 12 }}>类别</span>
         {[...cats.entries()].map(([k, c]) => (
           <button
             key={k}
@@ -224,11 +240,11 @@ function SignalsTab({ onStock, onInd }: Openers) {
       </div>
       <table>
         <thead>
-          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI(ETL·Cutler)</th><th>RSI(Lume·Cutler)</th><th>RSI(Lume·Wilder)</th><th>一致性</th><th>信号</th><th>操作</th></tr>
+          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th title="同时命中几个信号(0-9), 按此降序">共振</th><th>RSI(ETL·Cutler)</th><th>RSI(Lume·Cutler)</th><th>RSI(Lume·Wilder)</th><th>一致性</th><th>信号</th><th>操作</th></tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={10} className="dim" style={{ textAlign: "center", padding: 18 }}>
+            <tr><td colSpan={11} className="dim" style={{ textAlign: "center", padding: 18 }}>
               所选类别今日无命中 · <a style={{ color: "var(--up)", cursor: "pointer" }} onClick={() => setSel(new Set())}>清除筛选</a>
             </td></tr>
           )}

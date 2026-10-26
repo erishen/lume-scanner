@@ -45,6 +45,8 @@ export interface SignalRow {
   rsi_wilder: number | null;
   /** "match"=Cutler 同口径逐位一致(Δ<0.05) | "diff"=分叉 | "none"=无值 */
   rsi_match: "none" | "match" | "diff" | null;
+  /** 共振度: 该行同时命中几个信号(0-9); 服务端按此降序返回 */
+  sig_cnt?: number;
   signals: string[];
 }
 
@@ -54,6 +56,8 @@ export interface SignalPayload {
   count: number;      // 实际返回(被 limit 截断)的行数
   total?: number;     // 全市场带信号总数(未截断)
   sig_counts?: Record<string, number>; // 全市场各信号类别命中数(SQL 条件聚合, 未截断)
+  dist?: { g2?: number; g3?: number; g4?: number; g5?: number }; // 全市场共振分布(≥2/≥3/≥4/≥5)
+  min_sig?: number;   // 本次返回的最小共振度
   signals: SignalRow[];
   note?: string;
 }
@@ -156,8 +160,8 @@ export async function fetchMeta(): Promise<Meta> {
   return getJSON<Meta>(r);
 }
 
-export async function fetchSignals(limit = 80): Promise<SignalPayload> {
-  const r = await fetch(`/api/signals?limit=${limit}`);
+export async function fetchSignals(limit = 80, minSig = 2): Promise<SignalPayload> {
+  const r = await fetch(`/api/signals?limit=${limit}&min_sig=${minSig}`);
   return getJSON<SignalPayload>(r);
 }
 

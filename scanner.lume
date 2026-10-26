@@ -32,9 +32,11 @@ server {
 import "src/repo.lume" as repo;
 
 // ---- 信号: 近两交易日全市场扫描(读 stock_analysis, 口径同 stock-analyzer ETL)----
+// 按共振度 sig_cnt 降序返回; min_sig 控制最少命中几个信号(默认 2: 单信号 4000+ 只无信息量, 共振才有意义)。
 get "/api/signals", (req) => {
   let limit = int(get(req.query_params, "limit", "80"));
-  return repo.signals_payload(limit);
+  let min_sig = int(get(req.query_params, "min_sig", "2"));
+  return repo.signals_payload(limit, min_sig);
 };
 
 // ---- 规则筛选: POST {"filters": {...}} → 白名单字段 WHERE(值走 ? 占位, 不拼进 SQL)----

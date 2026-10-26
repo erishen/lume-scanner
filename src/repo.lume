@@ -72,20 +72,33 @@ export func meta_payload() {
 // ---- 全市场信号扫描: 最近一个交易日, 遍历 ETL 已算好的 flag 列分类 ----
 // 口径与 stock-analyzer src/etl/pipeline.py 一致: macd_cross/kdj_cross=金叉,
 // rsi_oversold/overbought(30/70), williams(±80/-20), obv_signal, boll_position(>1 破上轨/<0 破下轨)。
-export func signals_payload(limit) {
+// limit/min_sig: 返回「共振度(sig_cnt)最高」的前 limit 只; min_sig=最少同时命中几个信号。
+// 注: ≥1 信号的全市场有 4000+ 只(83%, 无信息量), 价值在共振 ≥2/≥3/…, 故按 sig_cnt 降序,
+// 且 SQL 侧 limit(ROW_CAP=200 内)保证 picks/signals 拿到的是「最强的 N 只」而非随机 N 只。
+export func signals_payload(limit, min_sig) {
   let db = db_scan();
   let dates = sql_query(db, "select distinct date from stock_analysis order by date desc limit 2");
   if (len(dates) < 1) {
-    return { ok: true, date: null, count: 0, total: 0, signals: [], note: "暂无数据" };
+    return { ok: true, date: null, count: 0, total: 0, sig_counts: {}, dist: {}, signals: [], note: "暂无数据" };
   }
+  let minn = int(min_sig);
+  if (minn < 1) { minn = 1; }
   let last = get(dates[0], "date");
+  // 9 条 ETL 规则的共振度(一行命中几个信号, 0-9)
+  let sn = "(macd_cross=1)+(kdj_cross=1)+(rsi_oversold=1)+(rsi_overbought=1)+" +
+           "(williams_oversold=1)+(williams_overbought=1)+(obv_signal=1)+" +
+           "(boll_position>1.0)+(boll_position<0.0)";
   let rows = sql_query(db,
     "select code, close, change_percent, rsi, rsi_oversold, rsi_overbought, " +
-    "macd_cross, kdj_cross, williams_oversold, williams_overbought, obv_signal, boll_position " +
-    "from stock_analysis where date = ?", [last]);
-  // 全市场总数 + 各类别命中数: 单条 SQL 条件聚合(返回 1 行, 不受 ROW_CAP 截断;
+    "macd_cross, kdj_cross, williams_oversold, williams_overbought, obv_signal, boll_position, " +
+    sn + " as sig_cnt " +
+    "from stock_analysis where date = ? and " + sn + " >= " + str(minn) + " " +
+    "order by sig_cnt desc, obv_signal desc, close desc limit ?",
+    [last, int(limit)]);
+  // 全市场总数 + 各类别命中数 + 共振分布: 单条 SQL 条件聚合(返回 1 行, 不受 ROW_CAP 截断;
   // 直接数循环行会因 ROW_CAP=200 只能看到 200 行, 得出 170 这种假总数)。
   let sig_counts = {};
+  let dist = {};
   let total = 0;
   let tc = sql_query(db,
     "select " +
@@ -93,9 +106,9 @@ export func signals_payload(limit) {
     "sum(rsi_oversold=1) as c_ros, sum(rsi_overbought=1) as c_ron, " +
     "sum(williams_oversold=1) as c_wos, sum(williams_overbought=1) as c_won, " +
     "sum(obv_signal=1) as c_obv, sum(boll_position>1.0) as c_bup, sum(boll_position<0.0) as c_bdn, " +
-    "sum(macd_cross=1 or kdj_cross=1 or rsi_oversold=1 or rsi_overbought=1 or " +
-    "williams_oversold=1 or williams_overbought=1 or obv_signal=1 or " +
-    "boll_position>1.0 or boll_position<0.0) as c_total " +
+    "sum(" + sn + ") as c_total, " +
+    "sum(" + sn + ">=2) as g2, sum(" + sn + ">=3) as g3, " +
+    "sum(" + sn + ">=4) as g4, sum(" + sn + ">=5) as g5 " +
     "from stock_analysis where date = ?", [last]);
   if (len(tc) > 0) {
     let x = tc[0];
@@ -109,6 +122,10 @@ export func signals_payload(limit) {
     put(sig_counts, "OBV放量", int(get(x, "c_obv", 0)));
     put(sig_counts, "突破布林上轨", int(get(x, "c_bup", 0)));
     put(sig_counts, "跌破布林下轨", int(get(x, "c_bdn", 0)));
+    put(dist, "g2", int(get(x, "g2", 0)));
+    put(dist, "g3", int(get(x, "g3", 0)));
+    put(dist, "g4", int(get(x, "g4", 0)));
+    put(dist, "g5", int(get(x, "g5", 0)));
   }
   let out = [];
   let i = 0;
@@ -146,6 +163,7 @@ export func signals_payload(limit) {
         rsi_lume: rsi_lume,
         rsi_wilder: rsi_wilder,
         rsi_match: tag,
+        sig_cnt: int(get(r, "sig_cnt", len(sigs))),
         signals: sigs,
       });
     }
@@ -161,7 +179,7 @@ export func signals_payload(limit) {
     put(out[k], "name", get(names, numeric_of(get(out[k], "code", "")), ""));
     k = k + 1;
   }
-  return { ok: true, date: last, count: len(out), total: total, sig_counts: sig_counts, signals: out };
+  return { ok: true, date: last, count: len(out), total: total, sig_counts: sig_counts, dist: dist, min_sig: minn, signals: out };
 }
 
 // ============================================================================
@@ -270,7 +288,7 @@ export func picks_payload() {
   if (int(get(PICKS_CACHE, "exp", 0)) >= now() and get(PICKS_CACHE, "data", null) != null) {
     return get(PICKS_CACHE, "data", null);
   }
-  let sig = signals_payload(999);
+  let sig = signals_payload(999, 1);
   let picks = get(sig, "signals", []);
   let out = { ok: true, date: get(sig, "date", null), picks: [], note: "当日无信号, 无精选" };
   if (len(picks) > 0) {
@@ -964,8 +982,9 @@ export func freshness_payload() {
 // agent 工具(顶层注册, 白名单由 make dev 注入 HARNESS_TOOLS_ALLOW 过滤)
 // 全部只读: 只调 sql_query(SELECT-only 物理只读), 无任何写操作。
 // ============================================================================
-tool "scan_signals", "扫描全市场最新交易日的技术信号(MACD金叉/KDJ金叉/RSI超买卖/布林带突破/OBV放量), 返回带信号标签的标的列表。", {}, (arg) => {
-  return signals_payload(80);
+tool "scan_signals", "扫描全市场最新交易日的技术信号(MACD金叉/KDJ金叉/RSI超买卖/布林带突破/OBV放量), 按共振度(同时命中几个信号)降序返回。可选 arg.min_sig(默认1)控制最少命中几个信号, 越大越聚焦稀有共振。", {}, (arg) => {
+  let ms = int(get(arg, "min_sig", "1"));
+  return signals_payload(80, ms);
 };
 
 tool "screen_stocks", "按估值/量能规则筛选个股: filters 可含 volume_ratio_min / turnover_rate_min / total_market_value_min / close_min / close_max(单位亿元/次/元), 返回匹配标的(名称+量比+换手+市值)。", { filters: map }, (arg) => {
