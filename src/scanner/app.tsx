@@ -3,12 +3,14 @@ import { createRoot } from "react-dom/client";
 import {
   fetchMeta, fetchSignals, fetchScreen, fetchStock, fetchIndicators,
   fetchRealtime, fetchIndexes, fetchSignalStats, fetchDailyPicks,
+  fetchPaper, fetchFreshness,
   type Meta, type SignalPayload, type ScreenPayload, type StockPayload, type Filters, type IndicatorsPayload,
   type Realtime, type RealtimeIndexes, type SignalStatsPayload, type DailyPicksPayload,
+  type PaperPayload, type PaperPosition, type Freshness,
 } from "./api";
 import { ChatTab } from "./chat";
 
-type Tab = "signals" | "screen" | "stock" | "indicators" | "chat" | "glossary" | "about";
+type Tab = "signals" | "screen" | "stock" | "indicators" | "paper" | "chat" | "glossary" | "about";
 
 // ---- 轻量 SVG 折线(null 值断开, 支持多序列)----
 function fmtAxis(v: number): string {
@@ -413,6 +415,137 @@ function StatsCard() {
   );
 }
 
+// ---- 数据新鲜度 (K线/资产快照/模拟仓 时间戳 + 前端算滞后天数, 一眼看出哪份数据停了) ----
+function freshLag(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  const days = Math.floor((Date.now() - t) / 86400000);
+  return days <= 0 ? "今天" : days + " 天前";
+}
+function freshTone(iso: string | null | undefined, warnDays = 2): string {
+  const lag = freshLag(iso);
+  if (lag == null || lag === "今天") return "up";
+  const days = parseInt(lag, 10);
+  if (days <= warnDays) return "";
+  return "down";
+}
+
+export function FreshnessCard() {
+  const [fr, setFr] = useState<Freshness | null>(null);
+  useEffect(() => { fetchFreshness().then(setFr).catch(() => {}); }, []);
+  if (!fr || !fr.ok) return null;
+  const rows: [string, string, string | null, string][] = [
+    ["日 K / ETL 主库", "最新交易日", fr.analysis_latest ?? "—", fr.analysis_latest ?? ""],
+    ["资产快照", "updated_at", fr.snapshot_updated_at ?? "—", fr.snapshot_updated_at ?? ""],
+    ["模拟仓", "updated_at", fr.paper_updated_at ?? "—(未找到)", fr.paper_updated_at ?? ""],
+  ];
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <h3>数据新鲜度 <span>· 哪份数据停在什么时候</span></h3>
+      <table>
+        <thead><tr><th>数据源</th><th>时间戳</th><th>距今</th></tr></thead>
+        <tbody>
+          {rows.map(([label, tsLabel, ts, iso]) => (
+            <tr key={label}>
+              <td className="name">{label} <span style={{ color: "var(--faint)", fontWeight: 400 }}>{tsLabel}</span></td>
+              <td>{ts}</td>
+              <td className={freshTone(iso, label === "资产快照" ? 2 : 2)}>{freshLag(iso) ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="note" style={{ marginTop: 6 }}>滞后 &gt;2 天的数据源会用红色高亮。资产快照/模拟仓由宿主 stock-analyzer 的 launchd 每日 18:30 刷新, 突然变红说明那条链路断了。</div>
+    </div>
+  );
+}
+
+// ---- 模拟仓 (读 stock-analyzer paper_portfolio.json + 实时行情, 现算浮动盈亏/止损/止盈) ----
+function PaperTab({ onStock }: Openers) {
+  const [pk, setPk] = useState<PaperPayload | null>(null);
+  const [err, setErr] = useState("");
+  const load = () => { setErr(""); fetchPaper().then(setPk).catch((e) => setErr(String(e))); };
+  useEffect(() => { load(); }, []);
+  if (err) return <div className="err">模拟仓加载失败: {err}</div>;
+  if (!pk) return <div className="card"><div className="kv">加载中…</div></div>;
+  if (!pk.ok) return <div className="card"><div className="kv" style={{ color: "var(--down)" }}>{pk.reason}</div></div>;
+
+  const pos = pk.positions ?? [];
+  const totalCls = cls(pk.total_pnl_pct ?? 0);
+  return (
+    <>
+      <div className="card">
+        <h3>模拟仓总览 <span>· 更新 {pk.updated_at} · 已平仓 {pk.closed ?? 0} 笔 · 挂单 {pk.pending?.length ?? 0}</span></h3>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 6 }}>
+          {[
+            ["初始资金", (pk.initial_capital ?? 0).toLocaleString(), ""],
+            ["可用现金", (pk.cash ?? 0).toLocaleString(), ""],
+            ["持仓市值", pos.reduce((s, p) => s + ((p.price ?? 0) * (p.shares ?? 0)), 0).toLocaleString(undefined, { maximumFractionDigits: 0 }), ""],
+            ["总权益", (pk.equity ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 }), totalCls],
+            ["累计盈亏", (pk.total_pnl ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 }), totalCls],
+            ["累计盈亏率", (pk.total_pnl_pct ?? 0).toFixed(2) + "%", totalCls],
+          ].map(([k, v, c]) => (
+            <div key={k as string} className="perf-cell" style={c === "down" ? { color: "var(--down)" } : c === "up" ? { color: "var(--up)" } : undefined}>
+              <div className="perf-label">{k}</div>
+              <div className="perf-val">{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>当前持仓 {pos.length} 只 <span>· 现价走腾讯实时源(15s 缓存), 盈亏/止损/止盈现场计算</span></h3>
+        {pos.length === 0 ? <div className="kv">无持仓</div> : (
+          <table>
+            <thead>
+              <tr><th>代码</th><th>名称</th><th>买入日</th><th>成本</th><th>现价</th><th>浮动盈亏</th><th>盈亏%</th><th>止损/止盈</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              {pos.map((p) => (
+                <PaperRow key={p.code} p={p} onStock={onStock} />
+              ))}
+            </tbody>
+          </table>
+        )}
+        {(pk.pending?.length ?? 0) > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <b>挂单 {pk.pending!.length}</b>
+            <div className="note">{pk.pending!.map((o) => `${o.side} ${o.code} ${o.signal_date} — ${o.reason}`).join(" · ")}</div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function PaperRow({ p, onStock }: { p: PaperPosition; onStock: (c: string) => void }) {
+  const pnlCls = cls(p.upnl ?? 0);
+  const stopChip = p.stop_hit === true
+    ? <span className="chip red" title={`现价已跌破 -${((p.stop_loss ?? 0) * 100).toFixed(0)}% 止损线`}>触发止损</span>
+    : p.target_hit === true
+      ? <span className="chip green" title={`现价已涨超 +${((p.take_profit ?? 0) * 100).toFixed(0)}% 止盈线`}>触发止盈</span>
+      : null;
+  return (
+    <tr className="rowlink" onClick={() => onStock(p.code)}>
+      <td style={{ cursor: "pointer" }}>{p.code}</td>
+      <td className="name">{p.name || "—"}</td>
+      <td>{p.buy_date ?? "—"}</td>
+      <td>{(p.buy_price ?? 0).toFixed(2)}</td>
+      <td>
+        {p.suspended ? <span className="chip gray">停牌</span>
+          : p.price == null ? <span className="cold-hint" title={p.realtime_ok ? "无实时价" : "实时源不可用, 用库内收盘"}>—</span>
+          : <Num v={p.price} />}
+      </td>
+      <td className={pnlCls}>{p.upnl == null ? "—" : (p.upnl >= 0 ? "+" : "") + p.upnl.toFixed(0)}</td>
+      <td className={pnlCls}>{p.upnl_pct == null ? "—" : (p.upnl_pct >= 0 ? "+" : "") + p.upnl_pct.toFixed(1) + "%"}</td>
+      <td>{stopChip ?? <span style={{ color: "var(--faint)" }}>(±{(p.stop_loss ?? 0) * 100 || 0}/{(p.take_profit ?? 0) * 100 || 0}%)</span>}</td>
+      <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+        <button className="ghost" onClick={() => onStock(p.code)}>个股</button>
+      </td>
+    </tr>
+  );
+}
+
 // ---- Tab 3: 个股 K 线 + 指标 ----
 // seed: 共享的「当前个股」(与指标页跟随); onQuery: 本页手动查询后上报, 供指标页跟随
 function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
@@ -786,6 +919,7 @@ export function App() {
     ["screen", "规则筛选"],
     ["stock", "个股"],
     ["indicators", "指标"],
+    ["paper", "模拟仓"],
     ["chat", "AI 聊天"],
     ["glossary", "字段说明"],
     ["about", "数据源"],
@@ -803,10 +937,11 @@ export function App() {
         ))}
       </div>
       <div style={{ marginTop: 14 }}>
-        {tab === "signals" && <SignalsTab onStock={openStock} onInd={openInd} />}
+        {tab === "signals" && (<><FreshnessCard /><SignalsTab onStock={openStock} onInd={openInd} /></>)}
         {tab === "screen" && <ScreenTab onStock={openStock} onInd={openInd} />}
         {tab === "stock" && <StockTab seed={focus} onQuery={query} />}
         {tab === "indicators" && <IndicatorsTab seed={focus} onQuery={query} />}
+        {tab === "paper" && <PaperTab onStock={openStock} onInd={openInd} />}
         {tab === "chat" && <ChatTab />}
         {tab === "glossary" && <GlossaryTab />}
         {tab === "about" && <AboutTab />}

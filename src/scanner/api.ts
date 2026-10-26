@@ -269,3 +269,55 @@ export async function fetchDailyPicks(): Promise<DailyPicksPayload> {
   const r = await fetch("/api/daily-picks");
   return getJSON<DailyPicksPayload>(r);
 }
+
+export interface PaperPosition {
+  code: string;
+  name: string;
+  buy_date?: string | null;
+  buy_price: number;
+  shares: number;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  reason?: string | null;
+  price?: number | null;
+  realtime_ok?: boolean;
+  suspended?: boolean;
+  cost?: number | null;
+  upnl?: number | null;
+  upnl_pct?: number | null;
+  stop_hit?: boolean | null;
+  target_hit?: boolean | null;
+}
+
+export interface PaperPayload {
+  ok: boolean;
+  ts?: number | null;
+  reason?: string | null;
+  updated_at?: string | null;
+  initial_capital?: number | null;
+  cash?: number | null;
+  equity?: number | null;
+  total_pnl?: number | null;
+  total_pnl_pct?: number | null;
+  positions?: PaperPosition[];
+  closed?: number | null;
+  pending?: Array<{ side?: string; code?: string; signal_date?: string; reason?: string }>;
+}
+
+export async function fetchPaper(): Promise<PaperPayload> {
+  const r = await fetch("/api/paper");
+  return getJSON<PaperPayload>(r);
+}
+
+export interface Freshness {
+  ok: boolean;
+  analysis_latest?: string | null;
+  snapshot_updated_at?: string | null;
+  snapshot_rows?: number | null;
+  paper_updated_at?: string | null;
+}
+
+export async function fetchFreshness(): Promise<Freshness> {
+  const r = await fetch("/api/freshness");
+  return getJSON<Freshness>(r);
+}

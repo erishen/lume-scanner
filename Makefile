@@ -68,7 +68,7 @@ watch:
 # 全量真实库: 不用样例库, 直接指向 stock-analyzer 的 data/ 双库(8.5M 行, 走索引毫秒级)
 REAL_DATA ?= ../../../invest-kit/apps/stock-analyzer/data
 # agent 工具白名单(本地只读 3 个 + SQL introspect + 基础工具, 不放行 sql_write)
-SCANNER_TOOLS ?= scan_signals,screen_stocks,stock_kline,stock_indicators,realtime_quote,market_indexes,signal_stats,daily_picks,sql_query,sql_tables,sql_schema,read_file,get_time
+SCANNER_TOOLS ?= scan_signals,screen_stocks,stock_kline,stock_indicators,realtime_quote,market_indexes,signal_stats,daily_picks,paper_portfolio,data_freshness,sql_query,sql_tables,sql_schema,read_file,get_time
 
 # Docker 构建/运行 (OrbStack daemon; 沙箱无 DOCKER_HOST 时由宿主终端跑)
 # 基座: 容器内重编当前宿主 lume/ C 源码(带 #54/#55 内建, 非老 v0.6.3), 静态 Linux bin/lume。
@@ -95,10 +95,10 @@ docker-down:
 
 real: stop check
 	@echo "▶ http://127.0.0.1:$(PORT)  (make real: 真实 stock-analyzer 全量库, 工具白名单已注入)"
-	@echo "  SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db"
+	@echo "  SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db PAPER_PORTFOLIO=$(REAL_DATA)/paper_portfolio.json"
 	@$(ESBUILD) src/scanner/app.tsx --bundle --minify --format=esm --jsx=automatic --outdir=www --outbase=src/scanner &
 	@sleep 1
-	@SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db \
+	@SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db PAPER_PORTFOLIO=$(REAL_DATA)/paper_portfolio.json \
 		HARNESS_TOOLS_ALLOW=$(SCANNER_TOOLS) \
 		$(LUME) scanner.lume
 

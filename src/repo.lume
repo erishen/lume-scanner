@@ -711,6 +711,145 @@ export func indicators_payload(code, days, period) {
 }
 
 // ============================================================================
+// 模拟仓 (paper trading) — 读 stock-analyzer 的 paper_portfolio.json
+// 宿主 ETL 每日 18:30 自动交易后落盘, 容器把整个 data/ 只读挂载进 /app/data。
+// 本服务只读: 用现有实时行情通道(giveTencent, 15s 缓存)给每个持仓挂现价,
+// 现算浮动盈亏/止损/止盈。PAPER_PORTFOLIO 经 env 注入(compose/Makefile);
+// 缺省 .data/paper_portfolio.json, 读不到 → ok=false + 说明(前端降级显示)。
+// 注意: Lume 局部变量不能从 null 重赋值到具体类型, 故 P&L 全部拆成
+// 「一次返回」的 helper 函数, 不写 let x=null; x=... 的坏模式。
+// ============================================================================
+let PAPER_CACHE = { exp: 0, data: null };
+
+func paper_cost(p) {
+  return float(get(p, "buy_price", 0)) * float(get(p, "shares", 0));
+}
+func paper_upnl(p, price) {
+  let buy = float(get(p, "buy_price", 0));
+  let sh = float(get(p, "shares", 0));
+  if (price == null or buy <= 0.0) { return null; }
+  return price * sh - buy * sh;
+}
+func paper_upnl_pct(p, price) {
+  let buy = float(get(p, "buy_price", 0));
+  if (price == null or buy <= 0.0) { return null; }
+  return (price - buy) / buy * 100.0;
+}
+func paper_stop_hit(p, price) {
+  let sl = float(get(p, "stop_loss", 0));   // 0.08 = 跌 8% 触发止损
+  let pct = paper_upnl_pct(p, price);
+  if (pct == null or sl <= 0.0) { return null; }
+  return pct <= -(sl * 100.0);
+}
+func paper_target_hit(p, price) {
+  let tp = float(get(p, "take_profit", 0));  // 0.2 = 涨 20% 触发止盈
+  let pct = paper_upnl_pct(p, price);
+  if (pct == null or tp <= 0.0) { return null; }
+  return pct >= tp * 100.0;
+}
+
+export func paper_payload() {
+  if (int(get(PAPER_CACHE, "exp", 0)) >= now()) { return get(PAPER_CACHE, "data", PAPER_CACHE); }
+  let path = env("PAPER_PORTFOLIO");
+  if (path == null) { path = ".data/paper_portfolio.json"; }
+  let raw = read_file(path);
+  if (raw == null) {
+    let msg = { ok: false, ts: now(), reason: "未找到模拟仓文件 (PAPER_PORTFOLIO=" + path + "); 容器需挂载 stock-analyzer data/, 或设 PAPER_PORTFOLIO 指向 paper_portfolio.json" };
+    put(PAPER_CACHE, "exp", now() + 15);
+    put(PAPER_CACHE, "data", msg);
+    return msg;
+  }
+  let jp = try(() => json(raw));
+  if (get(jp, "err", null) != null) {
+    let msg = { ok: false, ts: now(), reason: "模拟仓 JSON 解析失败: " + str(get(jp, "err", "")) };
+    put(PAPER_CACHE, "exp", now() + 30);
+    put(PAPER_CACHE, "data", msg);
+    return msg;
+  }
+  let d = get(jp, "ok");
+  let cash = float(get(d, "cash", 0));
+  let init = float(get(d, "initial_capital", 100000));
+  let posmap = get(d, "positions", {});
+  let ks = keys(posmap);
+  let positions = [];
+  let mtm = 0.0;
+  let i = 0;
+  while (i < len(ks)) {
+    let code = str(ks[i]);
+    let p = get(posmap, code, {});
+    let rt = realtime_payload(code);
+    let price = get(rt, "price", null);
+    let row = {
+      code: code,
+      name: str(get(p, "name", "")),
+      buy_date: str(get(p, "buy_date", "")),
+      buy_price: float(get(p, "buy_price", 0)),
+      shares: float(get(p, "shares", 0)),
+      stop_loss: float(get(p, "stop_loss", 0)),
+      take_profit: float(get(p, "take_profit", 0)),
+      reason: str(get(p, "reason", "")),
+      price: price,
+      realtime_ok: get(rt, "ok", false),
+      suspended: get(rt, "suspended", false),
+      cost: paper_cost(p),
+      upnl: paper_upnl(p, price),
+      upnl_pct: paper_upnl_pct(p, price),
+      stop_hit: paper_stop_hit(p, price),
+      target_hit: paper_target_hit(p, price),
+    };
+    push(positions, row);
+    if (price != null) { mtm = mtm + price * float(get(p, "shares", 0)); }
+    i = i + 1;
+  }
+  let total = mtm + cash;
+  let payload = {
+    ok: true,
+    ts: now(),
+    updated_at: str(get(d, "updated_at", "")),
+    initial_capital: init,
+    cash: cash,
+    equity: total,
+    total_pnl: total - init,
+    total_pnl_pct: (total - init) / init * 100.0,
+    positions: positions,
+    closed: int(len(get(d, "closed", []))),
+    pending: get(d, "pending", []),
+  };
+  put(PAPER_CACHE, "exp", now() + 30);
+  put(PAPER_CACHE, "data", payload);
+  return payload;
+}
+
+// ---- 数据新鲜度 (K线最新交易日 / 资产快照 updated_at / 模拟仓 updated_at) ----
+// 目的: 前端一眼看到「哪些数据停了」, 像资产快照 8/23 停更 64 天那种问题第一天就暴露。
+// 滞后天数由前端用本地时钟算, Lume 侧只返回原始时间戳。
+export func freshness_payload() {
+  let d = sql_query(db_scan(), "select max(date) as latest from stock_analysis");
+  let latest = null;
+  if (len(d) > 0) { latest = get(d[0], "latest"); }
+  let a = sql_query(db_asset(), "select max(updated_at) as up, count(*) as n from asset_snapshot");
+  let snap_up = null;
+  let snap_n = 0;
+  if (len(a) > 0) { snap_up = get(a[0], "up"); snap_n = int(get(a[0], "n", 0)); }
+  let ppath = env("PAPER_PORTFOLIO");
+  if (ppath == null) { ppath = ".data/paper_portfolio.json"; }
+  let praw = read_file(ppath);
+  let paper_up = null;
+  if (praw != null) {
+    let pj = try(() => json(praw));
+    if (get(pj, "err", null) == null) { paper_up = str(get(get(pj, "ok"), "updated_at", "")); }
+  }
+  return {
+    ok: true,
+    ts: now(),
+    analysis_latest: latest,
+    snapshot_updated_at: snap_up,
+    snapshot_rows: snap_n,
+    paper_updated_at: paper_up,
+  };
+}
+
+// ============================================================================
 // agent 工具(顶层注册, 白名单由 make dev 注入 HARNESS_TOOLS_ALLOW 过滤)
 // 全部只读: 只调 sql_query(SELECT-only 物理只读), 无任何写操作。
 // ============================================================================
@@ -752,4 +891,12 @@ tool "signal_stats", "查各技术信号近 180 天历史战绩(触发次数/1·
 
 tool "daily_picks", "查今日精选: 当日带信号票按「信号数×量比×市值」打分取 Top 8, 附每只的量比/市值。10min 缓存。", {}, (arg) => {
   return picks_payload();
+};
+
+tool "paper_portfolio", "查模拟仓: 当前持仓(成本/现价/浮动盈亏/是否触发止损止盈)+ 已平仓数 + 挂单, 复用它实时行情通道。返回 total_pnl/total_pnl_pct/cash/equity。", {}, (arg) => {
+  return paper_payload();
+};
+
+tool "data_freshness", "查数据新鲜度: K线最新交易日/资产快照 updated_at/模拟仓 updated_at, 用于回答「数据是不是最新的」「哪份数据停了」。", {}, (arg) => {
+  return freshness_payload();
 };
