@@ -41,7 +41,7 @@ function Lines({ data, labels, w = 720, h = 160, min, max }: {
     return (
       <g key={g}>
         <line x1={48} x2={w - 8} y1={y} y2={y} stroke="#21262d" strokeDasharray="3 4" />
-        <text x={44} y={y + 3} fill="#6e7681" fontSize={9} textAnchor="end">{fmtAxis(v)}</text>
+        <text x={46} y={y + 3.5} fill="#6e7681" fontSize={10} textAnchor="end">{fmtAxis(v)}</text>
       </g>
     );
   });
@@ -79,7 +79,7 @@ function Legend({ labels }: { labels: string[] }) {
   );
 }
 
-// 指标图卡片: 标题 + 副题 + legend + Lines
+// 指标图卡片: 标题+副题(左) 与 legend(右) 并排成一行头部 + Lines
 function ChartCard({ title, sub, data, labels, min, max, w = 720, h = 150 }: {
   title: string; sub?: string; data: (number | null)[][]; labels: string[];
   min?: number; max?: number; w?: number; h?: number;
@@ -87,9 +87,9 @@ function ChartCard({ title, sub, data, labels, min, max, w = 720, h = 150 }: {
   return (
     <div className="chart-card">
       <div className="chart-title">
-        <div>{title}{sub ? <span>{sub}</span> : null}</div>
+        <div className="chart-labels"><b>{title}</b>{sub ? <span>{sub}</span> : null}</div>
+        {labels.length > 1 ? <Legend labels={labels} /> : null}
       </div>
-      <Legend labels={labels} />
       <Lines data={data} labels={labels} min={min} max={max} w={w} h={h} />
     </div>
   );
@@ -486,43 +486,56 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
           )}
           <div className="chart-grid cols-2">
             <div className="chart-card">
-              <div className="chart-title"><div>价格 + 均线<span>收盘 / MA5 / MA20</span></div></div>
-              <Legend labels={["Close", "MA5", "MA20"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>价格 + 均线</b><span>收盘 / MA5 / MA20</span></div>
+                <Legend labels={["Close", "MA5", "MA20"]} />
+              </div>
               <Lines data={[data.closes ?? [], data.ma5, data.ma20]} labels={["Close", "MA5", "MA20"]} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>MACD<span>12 / 26 / 9</span></div></div>
-              <Legend labels={["MACD", "Signal", "Hist"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>MACD</b><span>12 / 26 / 9</span></div>
+                <Legend labels={["MACD", "Signal", "Hist"]} />
+              </div>
               <Lines data={[data.macd.line, data.macd.signal, data.macd.hist]} labels={["MACD", "Signal", "Hist"]} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>RSI<span>Wilder vs Cutler · 14</span></div></div>
-              <Legend labels={["Wilder", "Cutler"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>RSI</b><span>Wilder vs Cutler · 14</span></div>
+                <Legend labels={["Wilder", "Cutler"]} />
+              </div>
               <Lines data={[data.rsi_wilder, data.rsi_cutler]} labels={["Wilder", "Cutler"]} min={0} max={100} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>布林带<span>20 · 2σ</span></div></div>
-              <Legend labels={["Mid", "Upper", "Lower"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>布林带</b><span>20 · 2σ</span></div>
+                <Legend labels={["Mid", "Upper", "Lower"]} />
+              </div>
               <Lines data={[data.boll.mid, data.boll.upper, data.boll.lower]} labels={["Mid", "Upper", "Lower"]} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>KDJ<span>period {data.period}</span></div></div>
-              <Legend labels={["K", "D", "J"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>KDJ</b><span>period {data.period}</span></div>
+                <Legend labels={["K", "D", "J"]} />
+              </div>
               <Lines data={[data.kdj.k, data.kdj.d, data.kdj.j]} labels={["K", "D", "J"]} min={-20} max={120} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>Williams %R<span>period {data.period}</span></div></div>
-              <Legend labels={["Williams %R"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>Williams %R</b><span>period {data.period}</span></div>
+              </div>
               <Lines data={[data.williams_r]} labels={["Williams %R"]} min={-100} max={0} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>ATR<span>period {data.period}</span></div></div>
-              <Legend labels={["ATR"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>ATR</b><span>period {data.period}</span></div>
+              </div>
               <Lines data={[data.atr]} labels={["ATR"]} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>OBV<span>on-balance volume</span></div></div>
-              <Legend labels={["OBV"]} />
+              <div className="chart-title">
+                <div className="chart-labels"><b>OBV</b><span>on-balance volume</span></div>
+              </div>
               <Lines data={[data.obv]} labels={["OBV"]} />
             </div>
           </div>
