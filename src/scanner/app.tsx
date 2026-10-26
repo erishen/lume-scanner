@@ -205,6 +205,8 @@ function ScreenTab({ onStock, onInd }: Openers) {
     fetchScreen(f, 50).then((d) => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
   };
+  // 挂载即显示默认数据(无条件 = 服务端回量比 Top 50), 不用点「筛选」
+  useEffect(() => { run(); }, []);
 
   return (
     <>
@@ -216,9 +218,12 @@ function ScreenTab({ onStock, onInd }: Openers) {
         <label>价格 ≤ <input value={cmax} onChange={(e) => setCmax(e.target.value)} placeholder="如 50" /></label>
         <button className="primary" onClick={run} disabled={loading}>筛选</button>
       </div>
+      {!data && loading && <div className="kv">加载中…</div>}
       {data && (
         <div className="card">
-          <h3>命中 {data.count} 只{data.where ? ` · WHERE ${data.where}` : ""}</h3>
+          <h3>{data.where && data.where !== "1=1"
+            ? <>命中 {data.count} 只 · WHERE {data.where}</>
+            : <>默认展示 · 量比 Top {data.count}</>}</h3>
           <table>
             <thead>
               <tr><th>代码</th><th>名称</th><th>收盘</th><th>量比</th><th>换手%</th><th>总市值(亿)</th><th>流通市值(亿)</th><th>操作</th></tr>
