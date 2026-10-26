@@ -80,6 +80,25 @@ export interface IndicatorsPayload {
   williams_r: (number | null)[];
   atr: (number | null)[];
   obv: number[];
+  closes: number[];
+  ma5: (number | null)[];
+  ma10: (number | null)[];
+  ma20: (number | null)[];
+  macd: { line: (number | null)[]; signal: (number | null)[]; hist: (number | null)[] };
+  rsi_wilder: (number | null)[];
+  boll: { mid: (number | null)[]; upper: (number | null)[]; lower: (number | null)[] };
+  performance: {
+    cumulative: number | null;
+    annualized_return: number | null;
+    annualized_vol: number | null;
+    sharpe: number | null;
+    sortino: number | null;
+    calmar: number | null;
+    max_drawdown_pct: number | null;
+    var_95: number | null;
+    cvar_95: number | null;
+  } | null;
+  lume_signals: string[];
 }
 
 export interface Filters {

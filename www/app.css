@@ -21,6 +21,15 @@ button.primary:disabled { opacity: .5; }
 .series { max-height: 420px; overflow: auto; border: 1px solid #30363d; border-radius: 10px; margin-top: 14px; }
 .name { color: #e6edf3; font-weight: 600; white-space: nowrap; }
 .name .code { color: #8b949e; font-weight: 400; }
+/* #55 绩效面板 */
+.perf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.perf-cell { border: 1px solid #21262d; border-radius: 8px; padding: 8px 10px; background: #161b22; }
+.perf-cell .perf-label { font-size: 11px; color: #8b949e; }
+.perf-cell .perf-val { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.perf-cell.pos .perf-val { color: #3fb950; }
+.perf-cell.neg .perf-val { color: #f85149; }
+.chip { display: inline-block; padding: 2px 8px; border: 1px solid #1f6feb55; border-radius: 10px;
+        color: #58a6ff; font-size: 12px; background: #0d1c33; }
 .err { color: #f85149; font-size: 13px; margin-top: 10px; }
 /* AI 聊天 tab */
 .chatbox { border: 1px solid #30363d; border-radius: 10px; margin-top: 14px; }

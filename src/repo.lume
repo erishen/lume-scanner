@@ -210,6 +210,14 @@ func clean_list(xs, from) {
   return out;
 }
 
+// 尾部 k 个值(null 保留)
+func tail_k(xs, k) {
+  let out = [];
+  let i = len(xs) - k;
+  while (i < len(xs)) { push(out, xs[i]); i = i + 1; }
+  return out;
+}
+
 export func indicators_payload(code, days, period) {
   let db = db_scan();
   let c = norm_code(code);
@@ -234,8 +242,71 @@ export func indicators_payload(code, days, period) {
   let lows = col_of(asc, "low");
   let closes = col_of(asc, "close");
   let vols = col_of(asc, "volume");
-  let kd = kdj(highs, lows, closes, p);
   let cut = p - 1;
+  // ---- #54 摆动类 ----
+  let kd = kdj(highs, lows, closes, p);
+  // ---- #55 趋势类(同为 Lume 内建现算, 不读 ETL 列)----
+  let ma5 = clean_list(rolling_mean(closes, 5), 4);
+  let ma10 = clean_list(rolling_mean(closes, 10), 9);
+  let ma20 = clean_list(rolling_mean(closes, 20), 19);
+  let mc = macd(closes, 12, 26, 9);
+  let macd_line = clean_list(get(mc, "macd", []), 0);
+  let macd_sig = clean_list(get(mc, "signal", []), 0);
+  let macd_hist = clean_list(get(mc, "hist", []), 0);
+  let rsi_w = clean_list(rsi(closes, 14), 13);
+  let bb = bollinger(closes, 20, 2.0);
+  let bb_mid = clean_list(get(bb, "mid", []), 19);
+  let bb_up = clean_list(get(bb, "upper", []), 19);
+  let bb_lo = clean_list(get(bb, "lower", []), 19);
+  // ---- #55 绩效面板(日收益率, 年化系数 = core BI_ANNUAL_SCALE = sqrt(252))----
+  // core 的 sharpe/annualized_vol/var/cvar 期望"小数"日收益(0.01=1%), pct_change
+  // 输出百分数(100x), 故 /100 归一后再喂; calmar/年化收益直接吃价格序列, 不受影响。
+  let rets100 = pct_change(closes);
+  let rets = [];
+  i = 0;
+  while (i < len(rets100)) {
+    let v = rets100[i];
+    push(rets, v != v ? v : v / 100.0);
+    i = i + 1;
+  }
+  let perf = {
+    cumulative: cumulative_return(closes) * 100.0,
+    annualized_return: annualized_return(closes) * 100.0,
+    annualized_vol: annualized_volatility(rets) * 100.0,
+    sharpe: sharpe_ratio(rets, 0.0),
+    sortino: sortino_ratio(rets, 0.0),
+    calmar: calmar_ratio(closes),
+    max_drawdown_pct: max_drawdown(closes),
+    var_95: value_at_risk(rets, 0.05) * 100.0,
+    cvar_95: expected_shortfall(rets, 0.05) * 100.0,
+  };
+  // ---- #55 Lume 侧信号判定(基于刚算出的序列尾值, 不读 ETL flag 列)----
+  let sigs = [];
+  let last_macd = tail_k(macd_line, 1)[0];
+  let last_sig = tail_k(macd_sig, 1)[0];
+  let l2_macd = tail_k(macd_line, 2)[0];
+  let l2_sig = tail_k(macd_sig, 2)[0];
+  if (l2_macd != null and l2_sig != null and last_macd != null and last_sig != null) {
+    if (l2_macd <= l2_sig and last_macd > last_sig) {
+      push(sigs, "MACD金叉(Lume)");
+    } else if (l2_macd >= l2_sig and last_macd < last_sig) {
+      push(sigs, "MACD死叉(Lume)");
+    }
+  }
+  let last_rsi = tail_k(rsi_w, 1)[0];
+  if (last_rsi != null and last_rsi < 30.0) { push(sigs, "RSI超卖(Wilder 14)"); }
+  if (last_rsi != null and last_rsi > 70.0) { push(sigs, "RSI超买(Wilder 14)"); }
+  let last_close = tail_k(closes, 1)[0];
+  let last_up = tail_k(bb_up, 1)[0];
+  let last_lo = tail_k(bb_lo, 1)[0];
+  if (last_up != null and last_close > last_up) { push(sigs, "破布林上轨(20,2)"); }
+  if (last_lo != null and last_close < last_lo) { push(sigs, "破布林下轨(20,2)"); }
+  let l3_k = tail_k(get(kd, "k", []), 3);
+  let l3_d = tail_k(get(kd, "d", []), 3);
+  if (len(l3_k) == 3 and len(l3_d) == 3 and l3_k[1] != null and l3_d[1] != null
+      and l3_k[1] <= l3_d[1] and l3_k[2] > l3_d[2]) {
+    push(sigs, "KDJ金叉");
+  }
   return {
     ok: true, code: c, name: nm, days: n, period: p, dates: dates,
     kdj: {
@@ -244,9 +315,16 @@ export func indicators_payload(code, days, period) {
       d: clean_list(get(kd, "d", []), cut),
       j: clean_list(get(kd, "j", []), cut),
     },
+    closes: closes,
     williams_r: clean_list(williams_r(highs, lows, closes, p), cut),
     atr: clean_list(atr(highs, lows, closes, p), cut),
     obv: clean_list(obv(closes, vols), 0),
+    ma5: ma5, ma10: ma10, ma20: ma20,
+    macd: { line: macd_line, signal: macd_sig, hist: macd_hist },
+    rsi_wilder: rsi_w,
+    boll: { mid: bb_mid, upper: bb_up, lower: bb_lo },
+    performance: perf,
+    lume_signals: sigs,
   };
 }
 

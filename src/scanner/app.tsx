@@ -55,6 +55,19 @@ function Legend({ labels }: { labels: string[] }) {
   );
 }
 
+function Perf({ label, v, plain }: { label: string; v: number | null | undefined; plain?: boolean }) {
+  const num = v == null || isNaN(v as number) ? null : (v as number);
+  // plain(VaR/CVaR: 正数=预期损失)不做红绿着色, 其余按「负数红/非负绿」。
+  const cls = num == null || plain ? "" : num < 0 ? "neg" : "pos";
+  const txt = num == null ? "—" : num.toFixed(2);
+  return (
+    <div className={"perf-cell " + cls}>
+      <div className="perf-label">{label}</div>
+      <div className="perf-val">{txt}</div>
+    </div>
+  );
+}
+
 function cls(n: number): string {
   if (n > 0) return "up";
   if (n < 0) return "down";
@@ -244,8 +257,46 @@ function IndicatorsTab() {
       {data?.note && <div className="kv">{data.note}</div>}
       {data && data.kdj && (
         <div className="series" style={{ maxHeight: "none" }}>
+          {/* Lume 侧信号判定(基于刚算出的序列尾值, 非 ETL flag 列)*/}
+          {data.lume_signals.length > 0 && (
+            <div style={{ padding: "8px 6px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Lume 信号判定</div>
+              {data.lume_signals.map((s) => (
+                <span key={s} className="chip" style={{ marginRight: 6, display: "inline-block", marginBottom: 4 }}>{s}</span>
+              ))}
+            </div>
+          )}
+          {/* 绩效面板(#55 risk metrics on the daily returns)*/}
+          {data.performance && (
+            <div style={{ padding: "8px 6px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>绩效 / 风险(日收益率, 年化 ×{Math.sqrt(252).toFixed(2)})</div>
+              <div className="perf-grid">
+                <Perf label="累计收益%" v={data.performance.cumulative} />
+                <Perf label="年化收益%" v={data.performance.annualized_return} />
+                <Perf label="年化波动%" v={data.performance.annualized_vol} />
+                <Perf label="夏普" v={data.performance.sharpe} />
+                <Perf label="Sortino" v={data.performance.sortino} />
+                <Perf label="Calmar" v={data.performance.calmar} />
+                <Perf label="最大回撤%" v={data.performance.max_drawdown_pct} plain />
+                <Perf label="VaR95(日)%" v={data.performance.var_95} plain />
+                <Perf label="CVaR95(日)%" v={data.performance.cvar_95} plain />
+              </div>
+            </div>
+          )}
           <div style={{ padding: "10px 6px" }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>KDJ (period {data.period})</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>价格 + 均线(收盘 / MA5 / MA20)</div>
+            <Legend labels={["Close", "MA5", "MA20"]} />
+            <Lines data={[data.closes ?? [], data.ma5, data.ma20]} labels={["Close", "MA5", "MA20"]} />
+            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>MACD (12/26/9)</div>
+            <Legend labels={["MACD", "Signal", "Hist"]} />
+            <Lines data={[data.macd.line, data.macd.signal, data.macd.hist]} labels={["MACD", "Signal", "Hist"]} />
+            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>RSI (Wilder, 14)</div>
+            <Legend labels={["RSI"]} />
+            <Lines data={[data.rsi_wilder]} labels={["RSI"]} min={0} max={100} />
+            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>布林带 (20, 2σ)</div>
+            <Legend labels={["Mid", "Upper", "Lower"]} />
+            <Lines data={[data.boll.mid, data.boll.upper, data.boll.lower]} labels={["Mid", "Upper", "Lower"]} />
+            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>KDJ (period {data.period})</div>
             <Legend labels={["K", "D", "J"]} />
             <Lines data={[data.kdj.k, data.kdj.d, data.kdj.j]} labels={["K", "D", "J"]} min={-20} max={120} />
             <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>Williams %R</div>
@@ -260,7 +311,7 @@ function IndicatorsTab() {
           </div>
         </div>
       )}
-      {!data && !loading && <div className="kv">点「计算」从全量库实时算 KDJ / Williams %R / ATR / OBV。</div>}
+      {!data && !loading && <div className="kv">点「计算」从全量库实时算 KDJ / MACD / RSI / 布林 / 绩效风险。</div>}
     </>
   );
 }
