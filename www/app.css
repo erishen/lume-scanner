@@ -279,6 +279,44 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 }
 .chatinput input:focus { outline: none; border-color: var(--accent); }
 
+/* ---- 实时行情 ---- */
+.rt-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  border-left: 3px solid var(--accent);
+}
+.rt-price { font-size: 26px; font-weight: 700; margin-left: 10px; font-variant-numeric: tabular-nums; }
+.rt-chg { font-size: 14px; margin-left: 10px; font-variant-numeric: tabular-nums; }
+.rt-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.rt-meta span.dim { color: var(--faint); }
+.rt-card .name { font-weight: 600; }
+
+.ticker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.ticker-item {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ticker-item b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.ticker-item.up b { color: var(--up); }
+.ticker-item.down b { color: var(--down); }
+.ticker-item span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ticker-item.up span:last-child { color: var(--up); }
+.ticker-item.down span:last-child { color: var(--down); }
+
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }

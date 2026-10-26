@@ -280,6 +280,110 @@ export func lume_rsi_cutler_live(code, period) {
   return v;
 }
 
+// ============================================================================
+// 实时行情层 — 腾讯 qt.gtimg.cn(免费免 token 文本源; 容器实测稳定 0.08s)。
+// 为何不用东财 JSON: OrbStack NAT 挡 push2.eastmoney.com(http/https 均 000),
+// 而腾讯 qt.gtimg.cn 容器内 Lume http_get 直连 200。
+// 单票:   q=<sh|sz|bj>+6位 全字段(88), 中文名称为 GBK 字节 → 名称改从本地
+//         asset 库 names_map(UTF-8) 取, 只取数值字段(ASCII 安全)。
+// 指数:   q=s_sh000001,s_sz399001,s_sz399006,s_sh000300 短报价(一记录 6 字段)。
+// 边界(已探明): http_get 失败不抛错(ok=false+err); 缓存 miss 时前端拿
+// ok=false+reason 降级显示库内收盘。模块级 TTL 缓存: 单票 15s / 指数 30s。
+// ============================================================================
+
+let RT_CACHE = {};   // code → { exp: int, data: map }
+
+// 数值字段: "-" / "" / 缺 → null(停牌或缺数据), 否则 float
+func rt_num(v) {
+  let s = str(v);
+  if (s == "" or s == "-" or s == "null") { return null; }
+  return float(s);
+}
+
+// ---- 单票实时行情(15s 缓存); 前端个股页 5s 轮询 ----
+export func realtime_payload(code) {
+  let c = norm_code(code);
+  let hit = get(RT_CACHE, c, null);
+  if (hit != null and int(get(hit, "exp", 0)) >= now()) {
+    return get(hit, "data", hit);
+  }
+  let r = http_get("http://qt.gtimg.cn/q=" + c, { timeout: 5.0 });
+  let body = str(get(r, "body", ""));
+  if (!get(r, "ok", false) or len(body) < 20) {
+    return { ok: false, code: c, reason: "实时获取失败: " + str(substr(str(get(r, "err", "")), 0, 40)) };
+  }
+  // body: v_sh600519="1~名~600519~现价~昨收~今开~...~涨跌~涨跌%~高~低~...";
+  let parts = split(body, "\"");
+  let f = split(get(parts, 1, ""), "~");
+  if (len(f) < 40) {
+    return { ok: false, code: c, reason: "实时源返回异常" };
+  }
+  let price = rt_num(f[3]);
+  if (price == null) {
+    return { ok: true, code: c, suspended: true, reason: "停牌或无行情" };
+  }
+  let names = names_map([c]);
+  let nm = get(names, numeric_of(c), "");
+  let rec = {
+    ok: true, code: c,
+    name: nm,
+    price: price,
+    prev_close: rt_num(f[4]),
+    open: rt_num(f[5]),
+    high: rt_num(f[33]),
+    low: rt_num(f[34]),
+    change: rt_num(f[31]),
+    change_pct: rt_num(f[32]),
+    volume: rt_num(f[36]),        // 手
+    amount: rt_num(f[37]),        // 万元
+    quote_time: str(f[30]),      // yyyymmddHHMMSS
+    ts: now(),
+  };
+  put(RT_CACHE, c, { exp: now() + 15, data: rec });
+  return rec;
+}
+
+// ---- 四大指数(30s 缓存); 信号页指数条 30s 轮询 ----
+// 短报价 s_ 记录: ~分隔 [1]=名称(GBK 弃用), [2]=代码, [3]=点位, [4]=涨跌, [5]=涨跌%
+let IDX_URL = "http://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006,s_sh000300";
+let IDX_NAMES = { "000001": "上证指数", "399001": "深证成指", "399006": "创业板指", "000300": "沪深300" };
+let IDX_CACHE = { exp: 0, data: [], fetched: 0 };
+
+export func indexes_payload() {
+  if (int(get(IDX_CACHE, "exp", 0)) >= now() and len(get(IDX_CACHE, "data", [])) > 0) {
+    return { ok: true, ts: get(IDX_CACHE, "fetched", 0), indexes: get(IDX_CACHE, "data", []) };
+  }
+  let r = http_get(IDX_URL, { timeout: 5.0 });
+  let body = str(get(r, "body", ""));
+  if (!get(r, "ok", false) or len(body) < 20) {
+    return { ok: false, reason: "指数获取失败", indexes: get(IDX_CACHE, "data", []), ts: get(IDX_CACHE, "fetched", 0) };
+  }
+  // 每记录 v_s_xxx="..."; → 按 " 切分, 奇数位是记录内容
+  let segs = split(body, "\"");
+  let out = [];
+  let i = 1;
+  while (i + 1 < len(segs)) {
+    let f = split(segs[i], "~");
+    if (len(f) > 5) {
+      let code = str(f[2]);
+      push(out, {
+        code: code,
+        name: get(IDX_NAMES, code, code),
+        price: rt_num(f[3]),
+        change: rt_num(f[4]),
+        change_pct: rt_num(f[5]),
+      });
+    }
+    i = i + 2;
+  }
+  if (len(out) > 0) {
+    put(IDX_CACHE, "exp", now() + 30);
+    put(IDX_CACHE, "data", out);
+    put(IDX_CACHE, "fetched", now());
+  }
+  return { ok: true, ts: now(), indexes: out };
+}
+
 export func indicators_payload(code, days, period) {
   let db = db_scan();
   let c = norm_code(code);

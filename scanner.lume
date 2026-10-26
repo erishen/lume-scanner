@@ -70,6 +70,18 @@ get "/api/meta", (req) => {
   return repo.meta_payload();
 };
 
+// ---- 实时行情: 腾讯 qt.gtimg.cn(免费文本源), 单票 15s 缓存 / 指数 30s 缓存。
+// 注: 字面量路由必须注册在动态段路由之前(当前 httpd 按注册顺序优先匹配,
+// 字面量 /indexes 若在后会被 :code 吞掉 —— 已踩坑, 顺序勿动)。
+// 上游挂时 ok=false + reason, 前端降级显示库内收盘值。
+get "/api/realtime/indexes", (req) => {
+  return repo.indexes_payload();
+};
+get "/api/realtime/:code", (req) => {
+  let code = get(req.params, "code", "");
+  return repo.realtime_payload(code);
+};
+
 // ---- agent 能力一览(启动时集成发现的工具/白名单, GET)----
 get "/discovery", (req) => {
   return {

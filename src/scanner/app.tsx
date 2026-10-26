@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   fetchMeta, fetchSignals, fetchScreen, fetchStock, fetchIndicators,
+  fetchRealtime, fetchIndexes,
   type Meta, type SignalPayload, type ScreenPayload, type StockPayload, type Filters, type IndicatorsPayload,
+  type Realtime, type RealtimeIndexes,
 } from "./api";
 import { ChatTab } from "./chat";
 
@@ -148,7 +150,9 @@ function SignalsTab({ onStock, onInd }: Openers) {
   if (!data) return <div className="kv">加载中…</div>;
   if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
   return (
-    <div className="card">
+    <>
+      <IndexTicker />
+      <div className="card">
       <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
       <table>
         <thead>
@@ -180,7 +184,8 @@ function SignalsTab({ onStock, onInd }: Openers) {
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -252,6 +257,80 @@ function ScreenTab({ onStock, onInd }: Openers) {
   );
 }
 
+// ---- 实时价卡(腾讯 qt.gtimg.cn 源; 5s 轮询, Lume 侧 15s 缓存; A 股红涨绿跌) ----
+function RealtimeCard({ code }: { code: string }) {
+  const [rt, setRt] = useState<Realtime | null>(null);
+  useEffect(() => {
+    let live = true;
+    const tick = () => fetchRealtime(code).then((d) => { if (live) setRt(d); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => { live = false; clearInterval(t); };
+  }, [code]);
+  if (!rt) return null;
+  if (!rt.ok || rt.price == null) {
+    return (
+      <div className="card rt-card">
+        <span className="kv">实时行情不可用</span>
+        <span className="kv dim">{rt.reason || "上游无数据, 展示库内收盘"}</span>
+      </div>
+    );
+  }
+  const up = (rt.change_pct ?? 0) >= 0;
+  const tone = up ? "up" : "down";
+  return (
+    <div className="card rt-card">
+      <div>
+        <span className="name">{rt.name ? rt.name + " " : ""}{rt.code}</span>
+        <span className={`rt-price ${tone}`}>{(rt.price ?? 0).toFixed(2)}</span>
+        <span className={`rt-chg ${tone}`}>
+          {up ? "▲" : "▼"} {(rt.change ?? 0) >= 0 ? "+" : ""}{(rt.change ?? 0).toFixed(2)}
+          {" "}({(rt.change_pct ?? 0) >= 0 ? "+" : ""}{(rt.change_pct ?? 0).toFixed(2)}%)
+        </span>
+      </div>
+      <div className="rt-meta">
+        <span>开 {fmt2(rt.open)}</span><span>高 {fmt2(rt.high)}</span><span>低 {fmt2(rt.low)}</span>
+        <span>昨收 {fmt2(rt.prev_close)}</span>
+        <span>量 {rt.volume != null ? Math.round(rt.volume / 10000).toLocaleString() + " 万手" : "—"}</span>
+        <span className="dim">{rt.quote_time ? fmtT(rt.quote_time) : ""} · 5s 刷新</span>
+      </div>
+    </div>
+  );
+}
+function fmt2(v?: number | null) { return v == null ? "—" : v.toFixed(2); }
+function fmtT(yyyymmddHHMMSS?: string) {
+  if (!yyyymmddHHMMSS || yyyymmddHHMMSS.length < 14) return "";
+  const s = String(yyyymmddHHMMSS);
+  return `${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(8, 10)}:${s.slice(10, 12)}:${s.slice(12, 14)}`;
+}
+
+// ---- 四大指数条(30s 轮询; 信号页顶部) ----
+function IndexTicker() {
+  const [ix, setIx] = useState<RealtimeIndexes | null>(null);
+  useEffect(() => {
+    let live = true;
+    const tick = () => fetchIndexes().then((d) => { if (live) setIx(d); }).catch(() => {});
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  if (!ix || !ix.indexes.length) return null;
+  return (
+    <div className="ticker">
+      {ix.indexes.map((x) => {
+        const up = (x.change_pct ?? 0) >= 0;
+        return (
+          <div key={x.code} className={`ticker-item ${up ? "up" : "down"}`}>
+            <span>{x.name}</span>
+            <b>{x.price != null ? x.price.toFixed(2) : "—"}</b>
+            <span>{up ? "▲" : "▼"} {Math.abs(x.change_pct ?? 0).toFixed(2)}%</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- Tab 3: 个股 K 线 + 指标 ----
 // seed: 共享的「当前个股」(与指标页跟随); onQuery: 本页手动查询后上报, 供指标页跟随
 function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
@@ -297,6 +376,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
             </div>
             <div className="kv">近 {data.days} 个交易日(升序) · 数据截至 {data.series[data.series.length - 1]?.date ?? "—"}</div>
           </div>
+          <RealtimeCard code={data.code} />
           <div className="card">
             <div className="series" style={{ maxHeight: 480, overflow: "auto", padding: 0 }}>
               <table>

@@ -177,3 +177,48 @@ export async function fetchIndicators(code: string, days = 200, period = 9): Pro
   const r = await fetch(`/api/indicators/${encodeURIComponent(code)}?days=${days}&period=${period}`);
   return getJSON<IndicatorsPayload>(r);
 }
+
+// ---- 实时行情(腾讯 qt.gtimg.cn 文本源; Lume 侧单票 15s / 指数 30s 缓存) ----
+export interface Realtime {
+  ok: boolean;
+  code: string;
+  name?: string;
+  price?: number | null;
+  prev_close?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  change?: number | null;
+  change_pct?: number | null;
+  volume?: number | null;   // 手
+  amount?: number | null;    // 万元
+  quote_time?: string;       // yyyymmddHHMMSS
+  ts?: number;
+  suspended?: boolean;
+  reason?: string;
+}
+
+export interface RealtimeIndex {
+  code: string;
+  name: string;
+  price: number | null;
+  change: number | null;
+  change_pct: number | null;
+}
+
+export interface RealtimeIndexes {
+  ok: boolean;
+  ts: number | null;
+  indexes: RealtimeIndex[];
+  reason?: string;
+}
+
+export async function fetchRealtime(code: string): Promise<Realtime> {
+  const r = await fetch(`/api/realtime/${encodeURIComponent(code)}`);
+  return getJSON<Realtime>(r);
+}
+
+export async function fetchIndexes(): Promise<RealtimeIndexes> {
+  const r = await fetch("/api/realtime/indexes");
+  return getJSON<RealtimeIndexes>(r);
+}
