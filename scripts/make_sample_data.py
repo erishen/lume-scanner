@@ -136,23 +136,32 @@ def build_stock(src_db, out_db, n_dates, n_codes):
     n = con.execute("SELECT COUNT(*) FROM stock_analysis").fetchone()[0]
     con.close()
     print(f"  scanner.db: {n} rows, {len(codes)} codes, {len(dates)} dates")
-    return True
+    return codes if n else False
 
-def build_asset(src_db, out_db, n_codes):
+def build_asset(src_db, out_db, n_codes, focus_codes):
     cols = "code,name,close,change_percent,volume,amount,volume_ratio,turnover_rate,total_market_value,float_market_value,total_shares,float_shares"
+    # focus_codes(scanner.db 里选中的带前缀代码)必须进 asset.db, 否则名称列会空
+    focus = {c[2:] for c in (focus_codes or []) if len(c) == 8}
     Path(out_db).parent.mkdir(parents=True, exist_ok=True)
     if Path(out_db).exists():
         Path(out_db).unlink()
     con = sqlite3.connect(out_db)
     con.executescript(ASSET_SCHEMA)
     ph = ",".join("?" * 12)
+    inserted = 0
+    if focus:
+        marks = ",".join("?" * len(focus))
+        for r in sqlite3.connect(src_db).execute(
+                f"SELECT {cols} FROM asset_snapshot WHERE code IN ({marks})", sorted(focus)):
+            con.execute(f"INSERT OR REPLACE INTO asset_snapshot({cols}) VALUES ({ph})", r)
+            inserted += 1
     for r in sqlite3.connect(src_db).execute(
             f"SELECT {cols} FROM asset_snapshot ORDER BY total_market_value DESC LIMIT ?", (n_codes,)):
         con.execute(f"INSERT OR REPLACE INTO asset_snapshot({cols}) VALUES ({ph})", r)
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM asset_snapshot").fetchone()[0]
     con.close()
-    print(f"  asset.db: {n} rows")
+    print(f"  asset.db: {n} rows (focus {inserted} + top {n_codes})")
     return True
 
 def main():
@@ -171,13 +180,16 @@ def main():
     print("▶ 生成样例库…")
     ok1 = True
     ok2 = True
+    focus = []
     if os.path.exists(src_stock):
-        ok1 = build_stock(src_stock, out_stock, args.dates, args.codes)
+        sel = build_stock(src_stock, out_stock, args.dates, args.codes)
+        ok1 = bool(sel)
+        focus = sel or []
     else:
         print(f"  源 {src_stock} 不存在, 跳过 scanner.db")
         ok1 = False
     if os.path.exists(src_asset):
-        ok2 = build_asset(src_asset, out_asset, 300)
+        ok2 = build_asset(src_asset, out_asset, 300, focus)
     else:
         print(f"  源 {src_asset} 不存在, 跳过 asset.db")
         ok2 = False
