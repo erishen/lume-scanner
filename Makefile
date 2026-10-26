@@ -18,7 +18,10 @@
 # 生产数据源: 不用样例库时,设 SCANNER_DB / ASSET_DB 指向真实 stock-analyzer data/ 双库
 #   SCANNER_DB=/path/stock_analysis.db ASSET_DB=/path/asset_snapshot.db make dev
 
-LUME   ?= $(HOME)/.local/bin/lume
+# 默认用邻居宿主树的本地构建(含 #54 序列指标内建; 安装件 ~/.local/bin/lume
+# 是 0.8.1 老版, 没有 kdj/atr/obv 等, 用它 check 会报 undefined variable)。
+# 想用安装件可 LUME=~/.local/bin/lume make dev(需先把宿主树 make 后重装)。
+LUME   ?= $(CURDIR)/../lume/bin/lume
 PORT   ?= 8094
 PY     ?= /usr/bin/python3
 
