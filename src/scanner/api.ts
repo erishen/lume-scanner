@@ -301,7 +301,7 @@ export interface PaperPayload {
   total_pnl_pct?: number | null;
   positions?: PaperPosition[];
   closed?: number | null;
-  pending?: Array<{ side?: string; code?: string; signal_date?: string; reason?: string }>;
+  pending?: Array<{ side?: string; code?: string; name?: string | null; signal_date?: string; reason?: string }>;
 }
 
 export async function fetchPaper(): Promise<PaperPayload> {

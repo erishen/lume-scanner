@@ -802,6 +802,30 @@ export func paper_payload() {
     i = i + 1;
   }
   let total = mtm + cash;
+  // 挂单补名称: 复用 names_map(asset_snapshot), key = numeric_of(code)
+  let pendraw = get(d, "pending", []);
+  let pend_codes = [];
+  let cj = 0;
+  while (cj < len(pendraw)) {
+    push(pend_codes, str(get(pendraw[cj], "code", "")));
+    cj = cj + 1;
+  }
+  let pnames = names_map(pend_codes);
+  let pn = [];
+  let ni = 0;
+  while (ni < len(pendraw)) {
+    let o = pendraw[ni];
+    let oc = str(get(o, "code", ""));
+    let onew = {
+      side: str(get(o, "side", "")),
+      code: oc,
+      name: get(pnames, numeric_of(oc), ""),
+      signal_date: str(get(o, "signal_date", "")),
+      reason: str(get(o, "reason", "")),
+    };
+    push(pn, onew);
+    ni = ni + 1;
+  }
   let payload = {
     ok: true,
     ts: now(),
@@ -813,7 +837,7 @@ export func paper_payload() {
     total_pnl_pct: (total - init) / init * 100.0,
     positions: positions,
     closed: int(len(get(d, "closed", []))),
-    pending: get(d, "pending", []),
+    pending: pn,
   };
   put(PAPER_CACHE, "exp", now() + 30);
   put(PAPER_CACHE, "data", payload);

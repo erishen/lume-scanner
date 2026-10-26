@@ -516,7 +516,24 @@ function PaperTab({ onStock }: Openers) {
         {(pk.pending?.length ?? 0) > 0 && (
           <div style={{ marginTop: 10 }}>
             <b>挂单 {pk.pending!.length}</b>
-            <div className="note">{pk.pending!.map((o) => `${o.side} ${o.code} ${o.signal_date} — ${o.reason}`).join(" · ")}</div>
+            <div className="note" style={{ display: "none" }} />
+            <table style={{ marginTop: 4 }}>
+              <thead><tr><th>方向</th><th>代码</th><th>名称</th><th>信号日</th><th>原因</th></tr></thead>
+              <tbody>
+                {pk.pending!.map((o, i) => (
+                  <tr key={i}>
+                    <td>{o.side === "buy"
+                      ? <span className="chip gold">买入</span>
+                      : <span className="chip red">卖出</span>}</td>
+                    <td>{o.code}</td>
+                    <td className="name">{o.name || "—"}</td>
+                    <td>{o.signal_date}</td>
+                    <td>{o.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="note">挂单 = 自动交易已决策、待下次 paper-auto 运行成交的指令</div>
           </div>
         )}
       </div>
