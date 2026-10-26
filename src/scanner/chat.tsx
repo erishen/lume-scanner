@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type SseEvent =
   | { t: "delta"; d: string }
@@ -78,6 +78,177 @@ async function streamChat(
 }
 
 type Msg = { role: "user" | "agent"; text: string; notes: string[] };
+
+// ---- 轻量 Markdown → React(零依赖: LLM 回复含 **加粗** / 列表 / 表格 / 代码块 / 引用) ----
+// 只覆盖聊天场景常用子集; 流式中未闭合的围栏代码块会先按 pre 显示, done 后自动成形。
+function mdInline(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith("**")) out.push(<strong key={k++}>{t.slice(2, -2)}</strong>);
+    else if (t.startsWith("`")) out.push(<code key={k++}>{t.slice(1, -1)}</code>);
+    else {
+      const lm = t.match(/\[([^\]]+)\]\(([^)\s]+)\)/);
+      out.push(
+        lm ? (
+          <a key={k++} href={lm[2]} target="_blank" rel="noreferrer">{lm[1]}</a>
+        ) : t
+      );
+    }
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function splitRow(s: string): string[] {
+  return s.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((x) => x.trim());
+}
+
+function Md({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const blocks: ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  while (i < lines.length) {
+    const ln = lines[i];
+    // 围栏代码
+    if (ln.trimStart().startsWith("```")) {
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trimStart().startsWith("```")) {
+        buf.push(lines[i]);
+        i++;
+      }
+      i++;
+      blocks.push(
+        <pre key={k++} className="md-pre">
+          <code>{buf.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+    // 标题
+    const h = ln.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      blocks.push(
+        <div key={k++} className={"md-h md-h" + h[1].length}>
+          {mdInline(h[2])}
+        </div>
+      );
+      i++;
+      continue;
+    }
+    // 表格(表头 + 分隔行, 之后连续的 | 行)
+    const sep = i + 1 < lines.length ? lines[i + 1] : "";
+    if (ln.includes("|") && sep.includes("-") && /^[\s|:-]+$/.test(sep)) {
+      const head = splitRow(ln);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      blocks.push(
+        <table key={k++} className="md-table">
+          <thead>
+            <tr>
+              {head.map((c, j) => (
+                <th key={j}>{mdInline(c)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>
+                {head.map((_, ci) => (
+                  <td key={ci}>{mdInline(r[ci] ?? "")}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+      continue;
+    }
+    // 列表(- / * / 数字. ; 缩进 >=2 空格视为子项)
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(ln)) {
+      const items: { t: string; sub: boolean; num: string | null }[] = [];
+      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+        const m2 = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        items.push({
+          t: m2 ? m2[3] : lines[i],
+          sub: m2 ? m2[1].length >= 2 : false,
+          num: m2 && m2[2].match(/^\d/) ? m2[2] : null,
+        });
+        i++;
+      }
+      blocks.push(
+        <ul key={k++} className="md-list">
+          {items.map((it, j) => (
+            <li key={j} className={"md-li" + (it.sub ? " sub" : "") + (it.num ? " ord" : "")}>
+              {it.num ? <span className="md-li-num">{it.num}</span> : null}
+              {mdInline(it.t)}
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+    // 引用
+    if (/^>\s?/.test(ln)) {
+      const buf: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      blocks.push(
+        <div key={k++} className="md-quote">
+          {mdInline(buf.join(" "))}
+        </div>
+      );
+      continue;
+    }
+    // 分隔线
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(ln)) {
+      blocks.push(<hr key={k++} />);
+      i++;
+      continue;
+    }
+    // 空行
+    if (ln.trim() === "") {
+      i++;
+      continue;
+    }
+    // 段落(合并到下一个块级/空行; 保留段内换行)
+    {
+      const buf: string[] = [ln];
+      i++;
+      while (
+        i < lines.length &&
+        lines[i].trim() !== "" &&
+        !lines[i].trimStart().startsWith("```") &&
+        !/^(#{1,6})\s/.test(lines[i]) &&
+        !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) &&
+        !/^>\s?/.test(lines[i])
+      ) {
+        buf.push(lines[i]);
+        i++;
+      }
+      blocks.push(
+        <div key={k++} className="md-p">
+          {mdInline(buf.join("\n"))}
+        </div>
+      );
+    }
+  }
+  return <div className="md">{blocks}</div>;
+}
 
 const DEMO_PROMPTS: Array<[string, string]> = [
   ["量比>2 换手>5", "帮我筛一下量比大于 2、换手率大于 5 的票"],
@@ -163,7 +334,11 @@ export function ChatTab() {
                     {n}
                   </div>
                 ))}
-                <div>{m.text || (busy && i === messages.length - 1 ? "…" : "")}</div>
+                <div>{m.role === "agent" ? (
+                    m.text ? <Md text={m.text} /> : (busy && i === messages.length - 1 ? "…" : "")
+                  ) : (
+                    m.text
+                  )}</div>
               </div>
             </div>
           ))}

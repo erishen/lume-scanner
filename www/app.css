@@ -329,6 +329,44 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .glossary tr:last-child td { border-bottom: 0; }
 .glossary .gloss-field { width: 34%; min-width: 180px; color: var(--text); font-weight: 600; white-space: nowrap; }
 
+/* ---- 聊天 Markdown(agent 回复) ---- */
+.msg .body .md { font-size: 13px; line-height: 1.55; word-break: break-word; }
+.md-p { white-space: pre-line; margin: 2px 0; }
+.md-h { font-weight: 600; margin: 8px 0 4px; }
+.md-h1 { font-size: 15px; } .md-h2 { font-size: 14px; } .md-h3, .md-h4, .md-h5, .md-h6 { font-size: 13px; }
+.md-list { margin: 2px 0 6px; padding-left: 18px; }
+.md-li { margin: 2px 0; }
+.md-li.sub { margin-left: 16px; }
+.md-li.ord .md-li-num { margin-right: 4px; font-weight: 600; }
+.md-pre {
+  background: #0d1117;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+  white-space: pre;
+}
+.md-pre code { background: none; padding: 0; font-size: 12px; }
+.md .md-table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md-table th, .md-table td { border: 1px solid var(--border-soft); padding: 4px 8px; text-align: left; }
+.md-table th { background: var(--panel); font-weight: 600; }
+.md-quote {
+  border-left: 3px solid var(--accent);
+  padding: 2px 10px;
+  margin: 4px 0;
+  color: var(--muted);
+}
+.md hr { border: 0; border-top: 1px solid var(--border-soft); margin: 8px 0; }
+
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
