@@ -381,7 +381,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
             <div className="series" style={{ maxHeight: 480, overflow: "auto", padding: 0 }}>
               <table>
                 <thead>
-                  <tr><th>日期</th><th>开</th><th>收</th><th>低/高</th><th>量</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
+                  <tr><th>日期</th><th>开</th><th>收</th><th>低/高</th><th>量(万)</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
                 </thead>
                 <tbody>
                   {data.series.map((r) => (
@@ -390,7 +390,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
                       <td><Num v={r.open} /></td>
                       <td><Num v={r.close} /></td>
                       <td><Num v={r.low} /> / <Num v={r.high} /></td>
-                      <td><Num v={r.volume} digits={0} /></td>
+                      <td>{r.volume == null ? "—" : (r.volume / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}</td>
                       <td className={cls(r.change_percent)}><Num v={r.change_percent} /></td>
                       <td><Num v={r.ma5} /></td>
                       <td><Num v={r.ma20} /></td>
