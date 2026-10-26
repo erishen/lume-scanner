@@ -34,7 +34,7 @@ services:
       SCANNER_DB: /app/data/stock_analysis.db
       ASSET_DB: /app/data/asset_snapshot.db
       # agent 工具白名单(同宿主 make real 的 SCANNER_TOOLS)
-      HARNESS_TOOLS_ALLOW: scan_signals,screen_stocks,stock_kline,sql_query,sql_tables,sql_schema,read_file,get_time
+      HARNESS_TOOLS_ALLOW: scan_signals,screen_stocks,stock_kline,stock_indicators,realtime_quote,market_indexes,sql_query,sql_tables,sql_schema,read_file,get_time
       # AI 聊天: 容器内经 host.docker.internal 回连宿主 LLM 网关(tsm-hub:19070)。
       # 注意: LLM_API_URL 必须显式写容器视角 —— docker compose 会自动读本目录 .env
       # 做插值, .env 里的 localhost:19070 在容器内指向容器自身, 会导致上游 502。

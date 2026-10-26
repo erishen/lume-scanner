@@ -318,6 +318,9 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .ticker-item.up span:last-child { color: var(--up); }
 .ticker-item.down span:last-child { color: var(--down); }
 
+/* ---- 表格全量展开按钮 ---- */
+.toggle-all { margin-top: 8px; font-size: 12px; }
+
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }

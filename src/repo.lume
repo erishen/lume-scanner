@@ -233,50 +233,74 @@ func tail_k(xs, k) {
   return out;
 }
 
+// RSI 现算结果模块级缓存: 信号页每次进页 80 行 × 两口径 = 160 次独立 SQL(虽走
+// idx_analysis_code_date 索引, 但重复跑无意义)。库内数据日更, 60s TTL 足够。
+let RSI_CACHE = {};   // "code:period" → { exp: int, v: number | null }
+
 // Lume 现算 Wilder RSI(读最近 ~64 根收盘价, 不读 ETL rsi 列), 返回尾值(1 位小数)或 null。
 // 用于信号页 ETL(Cutler) vs Lume(Wilder) 双口径对照: 同一只票, 两种 RSI 平滑方式的分叉量。
 export func lume_rsi_live(code, period) {
-  let db = db_scan();
   let c = norm_code(code);
+  let w = int(period);
+  let ck = c + ":" + str(w);
+  let hit = get(RSI_CACHE, ck, null);
+  if (hit != null and int(get(hit, "exp", 0)) >= now()) {
+    return get(hit, "v", null);
+  }
+  let db = db_scan();
   let rows = sql_query(db,
     "select close from stock_analysis where code = ? order by date desc limit 64",
     [c]);
-  if (len(rows) < 3) { return null; }
-  let asc = [];
-  let i = len(rows) - 1;
-  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
-  let closes = col_of(asc, "close");
-  let w = int(period);
-  if (w > len(closes) - 1) { w = len(closes) - 1; }
-  if (w < 1) { return null; }
-  let rs = rsi(closes, w);
-  let v = tail_k(rs, 1)[0];
-  if (v == null or v != v) { return null; }
+  let v = null;
+  if (len(rows) >= 3) {
+    let asc = [];
+    let i = len(rows) - 1;
+    while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+    let closes = col_of(asc, "close");
+    let ww = w;
+    if (ww > len(closes) - 1) { ww = len(closes) - 1; }
+    if (ww >= 1) {
+      let rs = rsi(closes, ww);
+      let last = tail_k(rs, 1)[0];
+      if (last != null and last == last) { v = last; }
+    }
+  }
+  put(RSI_CACHE, ck, { exp: now() + 60, v: v });
   return v;
 }
 
 // Lume 现算 Cutler RSI 尾值(与 ETL _calculate_rsi 同口径, 精确复现: 涨/跌各取最近
 // w 个价变的 rolling 均值)。Cutler 是「本地窗口」—— 尾值只依赖最近 w+1 根收盘价,
 // 无 Wilder 的 EMA 种子 warm-up, 故与 ETL 全历史列值按构造 Δ≈0(实测 6/6 逐位一致)。
-// 只需读 period+1 根(而非 64), 比 Wilder 路径更省。
+// 只需读 period+1 根(而非 64), 比 Wilder 路径更省; 结果带 60s 模块级缓存。
 export func lume_rsi_cutler_live(code, period) {
-  let db = db_scan();
   let c = norm_code(code);
   let w = int(period);
+  let ck = "cutler:" + c + ":" + str(w);
+  let hit = get(RSI_CACHE, ck, null);
+  if (hit != null and int(get(hit, "exp", 0)) >= now()) {
+    return get(hit, "v", null);
+  }
+  let db = db_scan();
   let need = w + 2;
   let rows = sql_query(db,
     "select close from stock_analysis where code = ? order by date desc limit ?",
     [c, need]);
-  if (len(rows) < w + 1) { return null; }
-  let asc = [];
-  let i = len(rows) - 1;
-  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
-  let closes = col_of(asc, "close");
-  if (w > len(closes) - 1) { w = len(closes) - 1; }
-  if (w < 1) { return null; }
-  let out = rsi_cutler(closes, w);
-  let v = tail_k(out, 1)[0];
-  if (v == null or v != v) { return null; }
+  let v = null;
+  if (len(rows) >= w + 1) {
+    let asc = [];
+    let i = len(rows) - 1;
+    while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+    let closes = col_of(asc, "close");
+    let ww = w;
+    if (ww > len(closes) - 1) { ww = len(closes) - 1; }
+    if (ww >= 1) {
+      let out = rsi_cutler(closes, ww);
+      let last = tail_k(out, 1)[0];
+      if (last != null and last == last) { v = last; }
+    }
+  }
+  put(RSI_CACHE, ck, { exp: now() + 60, v: v });
   return v;
 }
 
@@ -533,4 +557,14 @@ tool "stock_indicators", "实时重算个股 KDJ/Williams%R/ATR/OBV(读原始 hi
   let p = arg.period;
   if (p <= 0) { p = 14; }
   return indicators_payload(arg.code, d, p);
+};
+
+// 实时行情工具(腾讯 qt.gtimg.cn; 服务端 15s/30s TTL 缓存, agent 轮询不打爆上游)。
+// 与 stock_kline/stock_indicators(库内 T-1 数据)互补: 盘中问「现在多少」走这俩。
+tool "realtime_quote", "查个股实时行情(现价/涨跌/开高低昨收/量额/时间戳, 腾讯源, 15s 缓存)。code 带/不带 sh/sz/bj 前缀均可。停牌或上游失败时 ok=false + reason。", { code: string }, (arg) => {
+  return realtime_payload(arg.code);
+};
+
+tool "market_indexes", "查四大指数实时点位(上证指数/深证成指/创业板指/沪深300, 30s 缓存)。", {}, (arg) => {
+  return indexes_payload();
 };

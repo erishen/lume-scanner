@@ -336,12 +336,14 @@ function IndexTicker() {
 function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
   const [code, setCode] = useState("sh600519");
   const [days, setDays] = useState("120");
+  const [showAll, setShowAll] = useState(false);
   const [data, setData] = useState<StockPayload | null>(null);
   const [err, setErr] = useState("");
   const lastAuto = useRef("");
 
   const load = (c: string, d: string) => {
     setErr("");
+    setShowAll(false);   // 每次新查询回到「最近 30 行」视图
     fetchStock(c, Number(d)).then(setData).catch((e) => setErr(String(e)));
   };
   const submit = (e: React.FormEvent) => {
@@ -384,7 +386,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
                   <tr><th>日期</th><th>开</th><th>收</th><th>低/高</th><th>量(万)</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
                 </thead>
                 <tbody>
-                  {data.series.map((r) => (
+                  {(showAll ? data.series : data.series.slice(-30)).map((r) => (
                     <tr key={r.date}>
                       <td>{r.date}</td>
                       <td><Num v={r.open} /></td>
@@ -400,6 +402,11 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
                   ))}
                 </tbody>
               </table>
+              {data.series.length > 30 && (
+                <button className="ghost toggle-all" onClick={() => setShowAll(!showAll)}>
+                  {showAll ? "收起(只留最近 30 行)" : `展开全部 ${data.series.length} 行`}
+                </button>
+              )}
             </div>
           </div>
         </>
