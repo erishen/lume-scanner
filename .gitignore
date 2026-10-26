@@ -9,3 +9,6 @@ logs/
 
 # 本机测试脚手架 (mktemp/xcrun shim, 沙箱写 /tmp 被锁时用)
 .work-sc/
+
+# Lume 服务启动时 llm-router 自动生成
+skills/

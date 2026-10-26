@@ -1,6 +1,38 @@
 /* Shared API layer + types for the lume-scanner dashboard. All endpoints
  * live on the Lume server (docroot www/, plain root URLs). */
 
+/**
+ * Fetch a JSON endpoint defensively. The Lume SPA serves index.html (`<!DOCTYPE ...`)
+ * as a 404/500 fallback, so a raw `res.json()` throws `Unexpected token '<'` when the
+ * handler errors (e.g. a quant builtin on too-short history). This helper checks
+ * status + content-type and, on a non-JSON body, extracts the server's error message
+ * so the UI can show *why* it failed instead of a cryptic parse error.
+ */
+async function getJSON<T>(res: Response): Promise<T> {
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+  if (!res.ok || !ct.includes("application/json")) {
+    let detail = "";
+    try {
+      const text = await res.text();
+      // Lume httpd 500 page: <p>Lume handler error</p> or a bare reason string.
+      const m = text.match(/<h1>([\s\S]*?)<\/h1>/);
+      if (m) detail = m[1].trim();
+      else if (text.startsWith("{")) {
+        try { detail = JSON.parse(text).err || JSON.parse(text).error || ""; } catch { /* ignore */ }
+      } else {
+        // strip tags from the 500 body for a readable reason
+        detail = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      }
+    } catch {
+      /* body already consumed or unreadable */
+    }
+    throw new Error(
+      `HTTP ${res.status}${res.ok ? "" : " " + res.statusText}${detail ? " · " + detail : ""}`
+      + " (接口未返回 JSON, 请确认 Lume 服务已重启且版本含对应路由)");
+  }
+  return res.json() as Promise<T>;
+}
+
 export interface SignalRow {
   code: string;
   name: string;
@@ -111,12 +143,12 @@ export interface Filters {
 
 export async function fetchMeta(): Promise<Meta> {
   const r = await fetch("/api/meta");
-  return r.json();
+  return getJSON<Meta>(r);
 }
 
 export async function fetchSignals(limit = 80): Promise<SignalPayload> {
   const r = await fetch(`/api/signals?limit=${limit}`);
-  return r.json();
+  return getJSON<SignalPayload>(r);
 }
 
 export async function fetchScreen(f: Filters, limit = 50): Promise<ScreenPayload> {
@@ -125,15 +157,15 @@ export async function fetchScreen(f: Filters, limit = 50): Promise<ScreenPayload
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filters: f }),
   });
-  return r.json();
+  return getJSON<ScreenPayload>(r);
 }
 
 export async function fetchStock(code: string, days = 120): Promise<StockPayload> {
   const r = await fetch(`/api/stock/${encodeURIComponent(code)}?days=${days}`);
-  return r.json();
+  return getJSON<StockPayload>(r);
 }
 
 export async function fetchIndicators(code: string, days = 200, period = 9): Promise<IndicatorsPayload> {
   const r = await fetch(`/api/indicators/${encodeURIComponent(code)}?days=${days}&period=${period}`);
-  return r.json();
+  return getJSON<IndicatorsPayload>(r);
 }

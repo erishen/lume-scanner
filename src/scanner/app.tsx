@@ -9,6 +9,15 @@ import { ChatTab } from "./chat";
 type Tab = "signals" | "screen" | "stock" | "indicators" | "chat" | "about";
 
 // ---- 轻量 SVG 折线(null 值断开, 支持多序列)----
+function fmtAxis(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1e8) return (v / 1e8).toFixed(1) + "亿";
+  if (a >= 1e4) return (v / 1e4).toFixed(1) + "万";
+  if (a >= 1000) return v.toFixed(0);
+  if (a < 10 && a > 0) return v.toFixed(2);
+  return v.toFixed(1);
+}
+
 function Lines({ data, labels, w = 720, h = 160, min, max }: {
   data: (number | null)[][]; labels: string[]; w?: number; h?: number;
   min?: number; max?: number;
@@ -18,15 +27,23 @@ function Lines({ data, labels, w = 720, h = 160, min, max }: {
   const hi = max ?? Math.max(...all);
   const span = hi - lo || 1;
   const n = data[0]?.length ?? 0;
-  const px = (i: number) => (n > 1 ? (i / (n - 1)) * (w - 16) + 8 : w / 2);
-  const py = (v: number) => h - 20 - ((v - lo) / span) * (h - 30);
+  const px = (i: number) => (n > 1 ? (i / (n - 1)) * (w - 56) + 48 : w / 2);
+  const py = (v: number) => h - 24 - ((v - lo) / span) * (h - 36);
   const colors = ["#58a6ff", "#f85149", "#3fb950", "#d29922"];
+  // 4 条水平网格线
+  const grid = [0, 1, 2, 3].map((g) => {
+    const v = lo + (span * g) / 3;
+    const y = py(v);
+    return (
+      <g key={g}>
+        <line x1={48} x2={w - 8} y1={y} y2={y} stroke="#21262d" strokeDasharray="3 4" />
+        <text x={44} y={y + 3} fill="#6e7681" fontSize={9} textAnchor="end">{fmtAxis(v)}</text>
+      </g>
+    );
+  });
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w, background: "#0d1117", borderRadius: 8 }}>
-      <line x1={8} x2={w - 8} y1={h - 20} y2={h - 20} stroke="#30363d" />
-      <line x1={8} x2={w - 8} y1={10} y2={10} stroke="#30363d" />
-      <text x={8} y={h - 6} fill="#8b949e" fontSize={10}>{lo.toFixed(1)}</text>
-      <text x={w - 8} y={h - 6} fill="#8b949e" fontSize={10} textAnchor="end">{hi.toFixed(1)}</text>
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w, background: "transparent" }}>
+      {grid}
       {data.map((series, si) => {
         // 分段(null 断开)
         let path = "";
@@ -42,15 +59,32 @@ function Lines({ data, labels, w = 720, h = 160, min, max }: {
   );
 }
 
+const CHART_COLORS = ["#58a6ff", "#f85149", "#3fb950", "#d29922"];
+
 function Legend({ labels }: { labels: string[] }) {
-  const colors = ["#58a6ff", "#f85149", "#3fb950", "#d29922"];
   return (
-    <div style={{ display: "flex", gap: 14, marginBottom: 6, fontSize: 12, color: "#8b949e" }}>
+    <div className="legend">
       {labels.map((l, i) => (
         <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 14, height: 3, background: colors[i % 4], display: "inline-block", borderRadius: 2 }} />{l}
+          <i style={{ background: CHART_COLORS[i % 4] }} />{l}
         </span>
       ))}
+    </div>
+  );
+}
+
+// 指标图卡片: 标题 + 副题 + legend + Lines
+function ChartCard({ title, sub, data, labels, min, max, w = 720, h = 150 }: {
+  title: string; sub?: string; data: (number | null)[][]; labels: string[];
+  min?: number; max?: number; w?: number; h?: number;
+}) {
+  return (
+    <div className="chart-card">
+      <div className="chart-title">
+        <div>{title}{sub ? <span>{sub}</span> : null}</div>
+      </div>
+      <Legend labels={labels} />
+      <Lines data={data} labels={labels} min={min} max={max} w={w} h={h} />
     </div>
   );
 }
@@ -78,8 +112,29 @@ function Num({ v, digits = 2 }: { v: number | null | undefined; digits?: number 
   return <span>{v == null ? "—" : v.toFixed(digits)}</span>;
 }
 
+// ---- 信号 chip 语义着色(按关键词)----
+function chipClass(t: string): string {
+  if (/金叉|买入/.test(t)) return "gold";
+  if (/死叉|卖出/.test(t)) return "red";
+  if (/超卖/.test(t)) return "green";
+  if (/超买|放量|上轨/.test(t)) return "purple";
+  if (/下轨/.test(t)) return "blue";
+  return "gray";
+}
+function Chips({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+      {items.map((s) => <span key={s} className={"chip " + chipClass(s)}>{s}</span>)}
+    </div>
+  );
+}
+
+// 跳转到个股/指标页的回调(由 App 提供, 会切 tab 并带入 code 自动加载)
+type Openers = { onStock: (code: string) => void; onInd: (code: string) => void };
+
 // ---- Tab 1: 全市场信号 ----
-function SignalsTab() {
+function SignalsTab({ onStock, onInd }: Openers) {
   const [data, setData] = useState<SignalPayload | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -89,31 +144,35 @@ function SignalsTab() {
   if (!data) return <div className="kv">加载中…</div>;
   if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
   return (
-    <>
-      <div className="kv">截至 {data.date} · 共 {data.count} 只带信号</div>
+    <div className="card">
+      <h3>截至 {data.date} · 共 {data.count} 只带信号</h3>
       <table>
         <thead>
-          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI</th><th>信号</th></tr>
+          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI</th><th>信号</th><th>操作</th></tr>
         </thead>
         <tbody>
           {data.signals.map((s) => (
-            <tr key={s.code}>
-              <td>{s.code}</td>
+            <tr key={s.code} className="rowlink" onClick={() => onStock(s.code)}>
+              <td style={{ cursor: "pointer" }} title="点击看个股">{s.code}</td>
               <td className="name">{s.name || "—"}</td>
               <td><Num v={s.close} /></td>
               <td className={cls(s.change)}><Num v={s.change} /></td>
               <td><Num v={s.rsi} /></td>
-              <td>{s.signals.map((t) => <span key={t} className="chip">{t}</span>)}</td>
+              <td><Chips items={s.signals} /></td>
+              <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                <button className="ghost" onClick={() => onStock(s.code)}>个股</button>{" "}
+                <button className="ghost" onClick={() => onInd(s.code)}>指标</button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </>
+    </div>
   );
 }
 
 // ---- Tab 2: 规则筛选 ----
-function ScreenTab() {
+function ScreenTab({ onStock, onInd }: Openers) {
   const [data, setData] = useState<ScreenPayload | null>(null);
   const [vr, setVr] = useState("");
   const [to, setTo] = useState("");
@@ -145,34 +204,38 @@ function ScreenTab() {
         <button className="primary" onClick={run} disabled={loading}>筛选</button>
       </div>
       {data && (
-        <>
-          <div className="kv">命中 {data.count} 只{data.where ? ` · WHERE ${data.where}` : ""}</div>
+        <div className="card">
+          <h3>命中 {data.count} 只{data.where ? ` · WHERE ${data.where}` : ""}</h3>
           <table>
             <thead>
-              <tr><th>代码</th><th>名称</th><th>收盘</th><th>量比</th><th>换手%</th><th>总市值(亿)</th><th>流通市值(亿)</th></tr>
+              <tr><th>代码</th><th>名称</th><th>收盘</th><th>量比</th><th>换手%</th><th>总市值(亿)</th><th>流通市值(亿)</th><th>操作</th></tr>
             </thead>
             <tbody>
               {data.rows.map((r) => (
-                <tr key={r.code}>
-                  <td>{r.code}</td>
-                  <td>{r.name}</td>
+                <tr key={r.code} className="rowlink" onClick={() => onStock(r.code)}>
+                  <td style={{ cursor: "pointer" }} title="点击看个股">{r.code}</td>
+                  <td className="name">{r.name || "—"}</td>
                   <td><Num v={r.close} /></td>
                   <td><Num v={r.volume_ratio} /></td>
                   <td><Num v={r.turnover_rate} /></td>
                   <td><Num v={r.total_market_value} /></td>
                   <td><Num v={r.float_market_value} /></td>
+                  <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                    <button className="ghost" onClick={() => onStock(r.code)}>个股</button>{" "}
+                    <button className="ghost" onClick={() => onInd(r.code)}>指标</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </>
+        </div>
       )}
     </>
   );
 }
 
 // ---- Tab 3: 个股 K 线 + 指标 ----
-function StockTab() {
+function StockTab({ seed }: { seed?: string }) {
   const [code, setCode] = useState("sh600519");
   const [days, setDays] = useState("120");
   const [data, setData] = useState<StockPayload | null>(null);
@@ -183,6 +246,11 @@ function StockTab() {
     fetchStock(c, Number(d)).then(setData).catch((e) => setErr(String(e)));
   };
   const submit = (e: React.FormEvent) => { e.preventDefault(); load(code, days); };
+  // 从其它 tab 跳入: seed 变化时带入代码并自动查询
+  useEffect(() => {
+    if (seed) { setCode(seed); load(seed, days); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed]);
 
   return (
     <>
@@ -194,29 +262,36 @@ function StockTab() {
       {err && <div className="err">{err}</div>}
       {data && data.days > 0 && (
         <>
-          <div className="kv"><span className="name">{data.name ? `${data.name} ` : ""}{data.code}</span> · 近 {data.days} 个交易日(升序)</div>
-          <div className="series">
-            <table>
-              <thead>
-                <tr><th>日期</th><th>开</th><th>收</th><th>高低</th><th>量</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
-              </thead>
-              <tbody>
-                {data.series.map((r) => (
-                  <tr key={r.date}>
-                    <td>{r.date}</td>
-                    <td><Num v={r.open} /></td>
-                    <td><Num v={r.close} /></td>
-                    <td><Num v={r.low} /> / <Num v={r.high} /></td>
-                    <td><Num v={r.volume} digits={0} /></td>
-                    <td className={cls(r.change_percent)}><Num v={r.change_percent} /></td>
-                    <td><Num v={r.ma5} /></td>
-                    <td><Num v={r.ma20} /></td>
-                    <td><Num v={r.rsi} /></td>
-                    <td><Num v={r.macd} digits={3} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="summary-bar">
+            <div className="kv" style={{ fontSize: 15 }}>
+              <span className="name">{data.name ? data.name + " " : ""}{data.code}</span>
+            </div>
+            <div className="kv">近 {data.days} 个交易日(升序) · 数据截至 {data.series[data.series.length - 1]?.date ?? "—"}</div>
+          </div>
+          <div className="card">
+            <div className="series" style={{ maxHeight: 480, overflow: "auto", padding: 0 }}>
+              <table>
+                <thead>
+                  <tr><th>日期</th><th>开</th><th>收</th><th>低/高</th><th>量</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
+                </thead>
+                <tbody>
+                  {data.series.map((r) => (
+                    <tr key={r.date}>
+                      <td>{r.date}</td>
+                      <td><Num v={r.open} /></td>
+                      <td><Num v={r.close} /></td>
+                      <td><Num v={r.low} /> / <Num v={r.high} /></td>
+                      <td><Num v={r.volume} digits={0} /></td>
+                      <td className={cls(r.change_percent)}><Num v={r.change_percent} /></td>
+                      <td><Num v={r.ma5} /></td>
+                      <td><Num v={r.ma20} /></td>
+                      <td><Num v={r.rsi} /></td>
+                      <td><Num v={r.macd} digits={3} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -226,7 +301,7 @@ function StockTab() {
 }
 
 // ---- Tab 4: 实时技术指标(Lume 内建现算)----
-function IndicatorsTab() {
+function IndicatorsTab({ seed }: { seed?: string }) {
   const [code, setCode] = useState("sh600519");
   const [days, setDays] = useState("200");
   const [period, setPeriod] = useState("9");
@@ -234,42 +309,48 @@ function IndicatorsTab() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const load = () => {
+  const load = (c?: string) => {
+    const target = c ?? code;
     setErr("");
     setLoading(true);
-    fetchIndicators(code, Number(days) || 200, Number(period) || 9)
+    fetchIndicators(target, Number(days) || 200, Number(period) || 9)
       .then(setData)
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   };
+  // 从其它 tab 跳入: seed 变化时带入代码并自动计算(显式传 seed, 避开闭包读到旧 code)
+  useEffect(() => {
+    if (seed) { setCode(seed); load(seed); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed]);
 
   return (
     <>
       <form className="filters" onSubmit={(e) => { e.preventDefault(); load(); }}>
-        <label>代码 <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="sh600519" /></label>
+        <label>代码 <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="sh600519 / 600519" /></label>
         <label>天数 <input value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 70 }} /></label>
         <label>KDJ/ATR 周期 <input value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: 70 }} /></label>
         <button className="primary" type="submit" disabled={loading}>{loading ? "…" : "计算"}</button>
       </form>
-      <div className="kv">Lume 内建现算(读原始 high/low/close/volume, 不依赖 Python ETL 指标列)。
-        {data ? ` ${data.name ? data.name + " " : ""}${data.code} · 数据截至 ${data.dates[data.dates.length - 1] ?? "—"} · ${data.days} 日 · 周期 ${data.period}` : ""}</div>
       {err && <div className="err">{err}</div>}
-      {data?.note && <div className="kv">{data.note}</div>}
+      {data?.note && <div className="kv" style={{ color: "var(--warn)" }}>{data.note}</div>}
       {data && data.kdj && (
-        <div className="series" style={{ maxHeight: "none" }}>
-          {/* Lume 侧信号判定(基于刚算出的序列尾值, 非 ETL flag 列)*/}
+        <>
+          <div className="summary-bar">
+            <div className="kv" style={{ fontSize: 15 }}>
+              <span className="name">{data.name ? data.name + " " : ""}{data.code}</span>
+            </div>
+            <div className="kv">Lume 内建现算(不依赖 ETL 指标列) · 截至 {data.dates[data.dates.length - 1] ?? "—"} · {data.days} 日 · 周期 {data.period}</div>
+          </div>
           {data.lume_signals.length > 0 && (
-            <div style={{ padding: "8px 6px" }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Lume 信号判定</div>
-              {data.lume_signals.map((s) => (
-                <span key={s} className="chip" style={{ marginRight: 6, display: "inline-block", marginBottom: 4 }}>{s}</span>
-              ))}
+            <div className="card">
+              <h3>Lume 信号判定(基于刚算出的序列尾值)</h3>
+              <Chips items={data.lume_signals} />
             </div>
           )}
-          {/* 绩效面板(#55 risk metrics on the daily returns)*/}
           {data.performance && (
-            <div style={{ padding: "8px 6px" }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>绩效 / 风险(日收益率, 年化 ×{Math.sqrt(252).toFixed(2)})</div>
+            <div className="card">
+              <h3>绩效 / 风险(日收益率, 年化 ×{Math.sqrt(252).toFixed(2)})</h3>
               <div className="perf-grid">
                 <Perf label="累计收益%" v={data.performance.cumulative} />
                 <Perf label="年化收益%" v={data.performance.annualized_return} />
@@ -283,49 +364,69 @@ function IndicatorsTab() {
               </div>
             </div>
           )}
-          <div style={{ padding: "10px 6px" }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>价格 + 均线(收盘 / MA5 / MA20)</div>
-            <Legend labels={["Close", "MA5", "MA20"]} />
-            <Lines data={[data.closes ?? [], data.ma5, data.ma20]} labels={["Close", "MA5", "MA20"]} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>MACD (12/26/9)</div>
-            <Legend labels={["MACD", "Signal", "Hist"]} />
-            <Lines data={[data.macd.line, data.macd.signal, data.macd.hist]} labels={["MACD", "Signal", "Hist"]} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>RSI (Wilder, 14)</div>
-            <Legend labels={["RSI"]} />
-            <Lines data={[data.rsi_wilder]} labels={["RSI"]} min={0} max={100} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>布林带 (20, 2σ)</div>
-            <Legend labels={["Mid", "Upper", "Lower"]} />
-            <Lines data={[data.boll.mid, data.boll.upper, data.boll.lower]} labels={["Mid", "Upper", "Lower"]} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>KDJ (period {data.period})</div>
-            <Legend labels={["K", "D", "J"]} />
-            <Lines data={[data.kdj.k, data.kdj.d, data.kdj.j]} labels={["K", "D", "J"]} min={-20} max={120} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>Williams %R</div>
-            <Legend labels={["Williams %R"]} />
-            <Lines data={[data.williams_r]} labels={["Williams %R"]} min={-100} max={100} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>ATR (period {data.period})</div>
-            <Legend labels={["ATR"]} />
-            <Lines data={[data.atr]} labels={["ATR"]} />
-            <div style={{ fontWeight: 600, margin: "14px 0 4px" }}>OBV (on-balance volume)</div>
-            <Legend labels={["OBV"]} />
-            <Lines data={[data.obv]} labels={["OBV"]} />
+          <div className="chart-grid cols-2">
+            <div className="chart-card">
+              <div className="chart-title"><div>价格 + 均线<span>收盘 / MA5 / MA20</span></div></div>
+              <Legend labels={["Close", "MA5", "MA20"]} />
+              <Lines data={[data.closes ?? [], data.ma5, data.ma20]} labels={["Close", "MA5", "MA20"]} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>MACD<span>12 / 26 / 9</span></div></div>
+              <Legend labels={["MACD", "Signal", "Hist"]} />
+              <Lines data={[data.macd.line, data.macd.signal, data.macd.hist]} labels={["MACD", "Signal", "Hist"]} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>RSI<span>Wilder 14</span></div></div>
+              <Legend labels={["RSI"]} />
+              <Lines data={[data.rsi_wilder]} labels={["RSI"]} min={0} max={100} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>布林带<span>20 · 2σ</span></div></div>
+              <Legend labels={["Mid", "Upper", "Lower"]} />
+              <Lines data={[data.boll.mid, data.boll.upper, data.boll.lower]} labels={["Mid", "Upper", "Lower"]} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>KDJ<span>period {data.period}</span></div></div>
+              <Legend labels={["K", "D", "J"]} />
+              <Lines data={[data.kdj.k, data.kdj.d, data.kdj.j]} labels={["K", "D", "J"]} min={-20} max={120} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>Williams %R<span>period {data.period}</span></div></div>
+              <Legend labels={["Williams %R"]} />
+              <Lines data={[data.williams_r]} labels={["Williams %R"]} min={-100} max={100} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>ATR<span>period {data.period}</span></div></div>
+              <Legend labels={["ATR"]} />
+              <Lines data={[data.atr]} labels={["ATR"]} />
+            </div>
+            <div className="chart-card">
+              <div className="chart-title"><div>OBV<span>on-balance volume</span></div></div>
+              <Legend labels={["OBV"]} />
+              <Lines data={[data.obv]} labels={["OBV"]} />
+            </div>
           </div>
-        </div>
+        </>
       )}
       {!data && !loading && <div className="kv">点「计算」从全量库实时算 KDJ / MACD / RSI / 布林 / 绩效风险。</div>}
+      {loading && <div className="kv">计算中…</div>}
     </>
   );
 }
 
-// ---- Tab 4: 数据源 ----
+// ---- Tab 6: 数据源 ----
 function AboutTab() {
   const [meta, setMeta] = useState<Meta | null>(null);
   useEffect(() => { fetchMeta().then(setMeta).catch(() => setMeta(null)); }, []);
   if (!meta) return <div className="kv">数据源信息加载中…</div>;
   return (
-    <div className="kv">
-      最新交易日: {meta.latest_date ?? "—"}<br />
-      标的数: {meta.stocks} · 分析行数: {meta.analysis_rows} · 资产快照行数: {meta.asset_rows}<br />
-      架构: Lume 单二进制(C11) 只读 SQLite;信号计算在 Python stock-analyzer ETL 端。
+    <div className="card">
+      <h3>数据源</h3>
+      <div className="kv" style={{ margin: 0 }}>
+        最新交易日: <b>{meta.latest_date ?? "—"}</b><br />
+        标的数: {meta.stocks} · 分析行数: {meta.analysis_rows} · 资产快照行数: {meta.asset_rows}<br />
+        架构: Lume 单二进制(C11) 只读 SQLite;信号计算在 Python stock-analyzer ETL 端(宿主 launchd 每日 18:30 自动增量更新)。
+      </div>
     </div>
   );
 }
@@ -333,7 +434,12 @@ function AboutTab() {
 export function App() {
   const [tab, setTab] = useState<Tab>("signals");
   const [meta, setMeta] = useState<Meta | null>(null);
+  // 跨 tab 跳转: 记录最近从「信号/筛选」点进个股/指标的代码, 目标 tab 挂载时自动加载
+  const [stockSeed, setStockSeed] = useState("");
+  const [indSeed, setIndSeed] = useState("");
   useEffect(() => { fetchMeta().then(setMeta).catch(() => {}); }, []);
+  const openStock = (code: string) => { setStockSeed(code); setTab("stock"); };
+  const openInd = (code: string) => { setIndSeed(code); setTab("indicators"); };
   const tabs: [Tab, string][] = [
     ["signals", "信号扫描"],
     ["screen", "规则筛选"],
@@ -355,10 +461,10 @@ export function App() {
         ))}
       </div>
       <div style={{ marginTop: 14 }}>
-        {tab === "signals" && <SignalsTab />}
-        {tab === "screen" && <ScreenTab />}
-        {tab === "stock" && <StockTab />}
-        {tab === "indicators" && <IndicatorsTab />}
+        {tab === "signals" && <SignalsTab onStock={openStock} onInd={openInd} />}
+        {tab === "screen" && <ScreenTab onStock={openStock} onInd={openInd} />}
+        {tab === "stock" && <StockTab seed={stockSeed} />}
+        {tab === "indicators" && <IndicatorsTab seed={indSeed} />}
         {tab === "chat" && <ChatTab />}
         {tab === "about" && <AboutTab />}
       </div>

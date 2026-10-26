@@ -234,18 +234,31 @@ export func indicators_payload(code, days, period) {
   let dates = str_col_of(asc, "date");
   let names = names_map([c]);
   let nm = get(names, numeric_of(c), "");
-  if (n < 2) {
-    return { ok: true, code: c, name: nm, days: n, period: p, dates: dates, note: "数据不足(至少 2 日)",
-            kdj: null, williams_r: null, atr: null, obv: null };
-  }
   let highs = col_of(asc, "high");
   let lows = col_of(asc, "low");
   let closes = col_of(asc, "close");
   let vols = col_of(asc, "volume");
+  // 不足 3 根 K 线: RSI14/BOLL20 及绩效(需 >=2 个日收益)都算不出, 直接给 sparse 响应不抛错。
+  // 旧 bug: 样例库每股仅 5 根 K 线 × 硬编码 rsi(closes,14)/bollinger(closes,20) 越界 →
+  // 内建抛错 → 500 HTML(<!DOCTYPE) → 前端 r.json() 报 "Unexpected token '<'".
+  if (n < 3) {
+    return { ok: true, code: c, name: nm, days: n, period: p, dates: dates,
+            note: "K 线不足 3 根, 指标与绩效暂缺",
+            kdj: null, williams_r: null, atr: null, obv: null,
+            closes: closes, ma5: null, ma10: null, ma20: null,
+            macd: null, rsi_wilder: null, boll: null,
+            performance: null, lume_signals: [] };
+  }
   let cut = p - 1;
   // ---- #54 摆动类 ----
   let kd = kdj(highs, lows, closes, p);
   // ---- #55 趋势类(同为 Lume 内建现算, 不读 ETL 列)----
+  // 窗口自适应: rsi 需 window∈[1, n-1], bollinger 需 window∈[2, n], 短 K 线(3..19 根)
+  // 收缩到有效范围, 避免内建抛错; n>=20 时保持标准 14/20。
+  let rsi_win = 14;
+  if (rsi_win > n - 1) { rsi_win = n - 1; }
+  let bb_win = 20;
+  if (bb_win > n) { bb_win = n; }
   let ma5 = clean_list(rolling_mean(closes, 5), 4);
   let ma10 = clean_list(rolling_mean(closes, 10), 9);
   let ma20 = clean_list(rolling_mean(closes, 20), 19);
@@ -253,12 +266,12 @@ export func indicators_payload(code, days, period) {
   let macd_line = clean_list(get(mc, "macd", []), 0);
   let macd_sig = clean_list(get(mc, "signal", []), 0);
   let macd_hist = clean_list(get(mc, "hist", []), 0);
-  let rsi_w = clean_list(rsi(closes, 14), 13);
-  let bb = bollinger(closes, 20, 2.0);
-  let bb_mid = clean_list(get(bb, "mid", []), 19);
-  let bb_up = clean_list(get(bb, "upper", []), 19);
-  let bb_lo = clean_list(get(bb, "lower", []), 19);
-  // ---- #55 绩效面板(日收益率, 年化系数 = core BI_ANNUAL_SCALE = sqrt(252))----
+  let rsi_w = clean_list(rsi(closes, rsi_win), rsi_win - 1);
+  let bb = bollinger(closes, bb_win, 2.0);
+  let bb_mid = clean_list(get(bb, "mid", []), bb_win - 1);
+  let bb_up = clean_list(get(bb, "upper", []), bb_win - 1);
+  let bb_lo = clean_list(get(bb, "lower", []), bb_win - 1);
+  // ---- #55 绩效面板(n>=3 ⇒ 日收益 >=2, 各内建可算; 年化系数 = core sqrt(252))----
   // core 的 sharpe/annualized_vol/var/cvar 期望"小数"日收益(0.01=1%), pct_change
   // 输出百分数(100x), 故 /100 归一后再喂; calmar/年化收益直接吃价格序列, 不受影响。
   let rets100 = pct_change(closes);

@@ -167,7 +167,8 @@ def build_asset(src_db, out_db, n_codes, focus_codes):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(DEFAULT_OUT))
-    ap.add_argument("--dates", type=int, default=5)
+    ap.add_argument("--dates", type=int, default=60,
+                   help="每个标的抽取的最近交易日数(默认 60, 够 RSI14/BOLL20 出完整值; 5 会导致绩效/RSI 越界)")
     ap.add_argument("--codes", type=int, default=40)
     args = ap.parse_args()
 
