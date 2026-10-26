@@ -443,8 +443,8 @@ export function FreshnessCard() {
   if (!fr || !fr.ok) return null;
   const rows: [string, string, string, string][] = [
     ["日 K / ETL 主库", "最新交易日", fr.analysis_latest ?? "—", fr.analysis_latest ?? ""],
-    ["资产快照", "updated_at", fmtTs(fr.snapshot_updated_at), fr.snapshot_updated_at ?? ""],
-    ["模拟仓", "updated_at", fmtTs(fr.paper_updated_at), fr.paper_updated_at ?? ""],
+    ["资产快照", "更新时间", fmtTs(fr.snapshot_updated_at), fr.snapshot_updated_at ?? ""],
+    ["模拟仓", "更新时间", fmtTs(fr.paper_updated_at), fr.paper_updated_at ?? ""],
   ];
   return (
     <div className="card" style={{ marginBottom: 12 }}>
