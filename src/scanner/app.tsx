@@ -149,10 +149,10 @@ function SignalsTab({ onStock, onInd }: Openers) {
   if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
   return (
     <div className="card">
-      <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI 双口径: ETL(Cutler) vs Lume 现算(Wilder)</span></h3>
+      <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
       <table>
         <thead>
-          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI(ETL)</th><th>RSI(Lume)</th><th>口径</th><th>信号</th><th>操作</th></tr>
+          <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th>RSI(ETL·Cutler)</th><th>RSI(Lume·Cutler)</th><th>RSI(Lume·Wilder)</th><th>一致性</th><th>信号</th><th>操作</th></tr>
         </thead>
         <tbody>
           {data.signals.map((s) => (
@@ -162,13 +162,14 @@ function SignalsTab({ onStock, onInd }: Openers) {
               <td><Num v={s.close} /></td>
               <td className={cls(s.change)}><Num v={s.change} /></td>
               <td><Num v={s.rsi} /></td>
-              <td><Num v={s.rsi_lume} /></td>
+              <td title="Lume rsi_cutler 内建现算, 与 ETL 同口径, 逐位验证移植正确性"><Num v={s.rsi_lume} /></td>
+              <td title="Lume rsi 内建 Wilder EMA, 跨平滑口径参考" style={{ color: "var(--faint)" }}><Num v={s.rsi_wilder} /></td>
               <td>
                 {s.rsi_lume == null
                   ? <span style={{ color: "var(--faint)" }}>—</span>
-                  : s.rsi_match === "same"
-                    ? <span className="chip green" title="两种口径接近(差 < 2 点)">一致</span>
-                    : <span className="chip gold" title="Cutler(ETL) 与 Wilder(Lume) 平滑方式不同, 数值分叉">分叉</span>}
+                  : s.rsi_match === "match"
+                    ? <span className="chip green" title="Lume Cutler 与 ETL Cutler 逐位一致(Δ<0.05), 移植正确">Δ0.00</span>
+                    : <span className="chip gold" title="Lume Cutler 与 ETL Cutler 存在偏差(Δ≥0.05)">Δ {Math.abs((s.rsi_lume ?? 0) - s.rsi).toFixed(2)}</span>}
               </td>
               <td><Chips items={s.signals} /></td>
               <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
@@ -410,9 +411,9 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
               <Lines data={[data.macd.line, data.macd.signal, data.macd.hist]} labels={["MACD", "Signal", "Hist"]} />
             </div>
             <div className="chart-card">
-              <div className="chart-title"><div>RSI<span>Wilder 14</span></div></div>
-              <Legend labels={["RSI"]} />
-              <Lines data={[data.rsi_wilder]} labels={["RSI"]} min={0} max={100} />
+              <div className="chart-title"><div>RSI<span>Wilder vs Cutler · 14</span></div></div>
+              <Legend labels={["Wilder", "Cutler"]} />
+              <Lines data={[data.rsi_wilder, data.rsi_cutler]} labels={["Wilder", "Cutler"]} min={0} max={100} />
             </div>
             <div className="chart-card">
               <div className="chart-title"><div>布林带<span>20 · 2σ</span></div></div>

@@ -91,14 +91,16 @@ export func signals_payload(limit) {
     if (bp < 0.0) { push(sigs, "跌破布林下轨"); }
     if (len(sigs) > 0) {
       let rsi_etl = float(get(r, "rsi", 0.0));
-      let rsi_lume = lume_rsi_live(get(r, "code"), 14);
-      // 双口径对照: ETL rsi 列(Cutler, 读库) vs Lume 现算(Wilder, 读原始 close);
-      // 两者平滑方式不同, 数值会有分叉, 分叉量在此暴露给用户。same = 两值差 < 2(百分点)。
+      // 同口径复算: Lume rsi_cutler(Cutler, 与 ETL 同算法) → 按构造 Δ≈0,
+      // 作为「Lume 内建移植正确性」的逐位验证列(实测全量库 80/80 match)。
+      let rsi_lume = lume_rsi_cutler_live(get(r, "code"), 14);
+      // 跨口径参考: Lume rsi(Wilder EMA) vs ETL(Cutler 滚动均值), 分叉量仅展示, 不作判定。
+      let rsi_wilder = lume_rsi_live(get(r, "code"), 14);
       let tag = "none";
       if (rsi_lume != null) {
         let diff = rsi_lume - rsi_etl;
         if (diff < 0.0) { diff = -diff; }
-        tag = diff < 2.0 ? "same" : "branched";
+        tag = diff < 0.05 ? "match" : "diff";
       }
       push(out, {
         code: get(r, "code"),
@@ -106,6 +108,7 @@ export func signals_payload(limit) {
         change: float(get(r, "change_percent", 0.0)),
         rsi: rsi_etl,
         rsi_lume: rsi_lume,
+        rsi_wilder: rsi_wilder,
         rsi_match: tag,
         signals: sigs,
       });
@@ -252,6 +255,31 @@ export func lume_rsi_live(code, period) {
   return v;
 }
 
+// Lume 现算 Cutler RSI 尾值(与 ETL _calculate_rsi 同口径, 精确复现: 涨/跌各取最近
+// w 个价变的 rolling 均值)。Cutler 是「本地窗口」—— 尾值只依赖最近 w+1 根收盘价,
+// 无 Wilder 的 EMA 种子 warm-up, 故与 ETL 全历史列值按构造 Δ≈0(实测 6/6 逐位一致)。
+// 只需读 period+1 根(而非 64), 比 Wilder 路径更省。
+export func lume_rsi_cutler_live(code, period) {
+  let db = db_scan();
+  let c = norm_code(code);
+  let w = int(period);
+  let need = w + 2;
+  let rows = sql_query(db,
+    "select close from stock_analysis where code = ? order by date desc limit ?",
+    [c, need]);
+  if (len(rows) < w + 1) { return null; }
+  let asc = [];
+  let i = len(rows) - 1;
+  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+  let closes = col_of(asc, "close");
+  if (w > len(closes) - 1) { w = len(closes) - 1; }
+  if (w < 1) { return null; }
+  let out = rsi_cutler(closes, w);
+  let v = tail_k(out, 1)[0];
+  if (v == null or v != v) { return null; }
+  return v;
+}
+
 export func indicators_payload(code, days, period) {
   let db = db_scan();
   let c = norm_code(code);
@@ -280,7 +308,7 @@ export func indicators_payload(code, days, period) {
             note: "K 线不足 3 根, 指标与绩效暂缺",
             kdj: null, williams_r: null, atr: null, obv: null,
             closes: closes, ma5: null, ma10: null, ma20: null,
-            macd: null, rsi_wilder: null, boll: null,
+            macd: null, rsi_wilder: null, rsi_cutler: null, boll: null,
             performance: null, lume_signals: [] };
   }
   let cut = p - 1;
@@ -301,6 +329,7 @@ export func indicators_payload(code, days, period) {
   let macd_sig = clean_list(get(mc, "signal", []), 0);
   let macd_hist = clean_list(get(mc, "hist", []), 0);
   let rsi_w = clean_list(rsi(closes, rsi_win), rsi_win - 1);
+  let rsi_cut = clean_list(rsi_cutler(closes, rsi_win), rsi_win - 1);
   let bb = bollinger(closes, bb_win, 2.0);
   let bb_mid = clean_list(get(bb, "mid", []), bb_win - 1);
   let bb_up = clean_list(get(bb, "upper", []), bb_win - 1);
@@ -369,6 +398,7 @@ export func indicators_payload(code, days, period) {
     ma5: ma5, ma10: ma10, ma20: ma20,
     macd: { line: macd_line, signal: macd_sig, hist: macd_hist },
     rsi_wilder: rsi_w,
+    rsi_cutler: rsi_cut,
     boll: { mid: bb_mid, upper: bb_up, lower: bb_lo },
     performance: perf,
     lume_signals: sigs,

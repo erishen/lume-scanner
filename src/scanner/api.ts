@@ -39,8 +39,12 @@ export interface SignalRow {
   close: number;
   change: number;
   rsi: number;
+  /** Lume 现算 Cutler RSI 尾值(与 ETL rsi 列同口径, 按构造 Δ≈0, 验证移植正确性) */
   rsi_lume: number | null;
-  rsi_match: "none" | "same" | "branched" | null;
+  /** Lume 现算 Wilder RSI 尾值(EMA, 跨口径参考, 与 Cutler 有分叉) */
+  rsi_wilder: number | null;
+  /** "match"=Cutler 同口径逐位一致(Δ<0.05) | "diff"=分叉 | "none"=无值 */
+  rsi_match: "none" | "match" | "diff" | null;
   signals: string[];
 }
 
@@ -120,6 +124,8 @@ export interface IndicatorsPayload {
   ma20: (number | null)[];
   macd: { line: (number | null)[]; signal: (number | null)[]; hist: (number | null)[] };
   rsi_wilder: (number | null)[];
+  /** Cutler RSI(与 ETL 同口径, 精确可对照)序列, 与 rsi_wilder 同窗口 */
+  rsi_cutler: (number | null)[];
   boll: { mid: (number | null)[]; upper: (number | null)[]; lower: (number | null)[] };
   performance: {
     cumulative: number | null;
