@@ -51,7 +51,9 @@ export interface SignalRow {
 export interface SignalPayload {
   ok: boolean;
   date: string | null;
-  count: number;
+  count: number;      // 实际返回(被 limit 截断)的行数
+  total?: number;     // 全市场带信号总数(未截断)
+  sig_counts?: Record<string, number>; // 全市场各信号类别命中数(SQL 条件聚合, 未截断)
   signals: SignalRow[];
   note?: string;
 }

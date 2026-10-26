@@ -76,13 +76,40 @@ export func signals_payload(limit) {
   let db = db_scan();
   let dates = sql_query(db, "select distinct date from stock_analysis order by date desc limit 2");
   if (len(dates) < 1) {
-    return { ok: true, date: null, count: 0, signals: [], note: "暂无数据" };
+    return { ok: true, date: null, count: 0, total: 0, signals: [], note: "暂无数据" };
   }
   let last = get(dates[0], "date");
   let rows = sql_query(db,
     "select code, close, change_percent, rsi, rsi_oversold, rsi_overbought, " +
     "macd_cross, kdj_cross, williams_oversold, williams_overbought, obv_signal, boll_position " +
     "from stock_analysis where date = ?", [last]);
+  // 全市场总数 + 各类别命中数: 单条 SQL 条件聚合(返回 1 行, 不受 ROW_CAP 截断;
+  // 直接数循环行会因 ROW_CAP=200 只能看到 200 行, 得出 170 这种假总数)。
+  let sig_counts = {};
+  let total = 0;
+  let tc = sql_query(db,
+    "select " +
+    "sum(macd_cross=1) as c_macd, sum(kdj_cross=1) as c_kdj, " +
+    "sum(rsi_oversold=1) as c_ros, sum(rsi_overbought=1) as c_ron, " +
+    "sum(williams_oversold=1) as c_wos, sum(williams_overbought=1) as c_won, " +
+    "sum(obv_signal=1) as c_obv, sum(boll_position>1.0) as c_bup, sum(boll_position<0.0) as c_bdn, " +
+    "sum(macd_cross=1 or kdj_cross=1 or rsi_oversold=1 or rsi_overbought=1 or " +
+    "williams_oversold=1 or williams_overbought=1 or obv_signal=1 or " +
+    "boll_position>1.0 or boll_position<0.0) as c_total " +
+    "from stock_analysis where date = ?", [last]);
+  if (len(tc) > 0) {
+    let x = tc[0];
+    total = int(get(x, "c_total", 0));
+    put(sig_counts, "MACD金叉", int(get(x, "c_macd", 0)));
+    put(sig_counts, "KDJ金叉", int(get(x, "c_kdj", 0)));
+    put(sig_counts, "RSI超卖", int(get(x, "c_ros", 0)));
+    put(sig_counts, "RSI超买", int(get(x, "c_ron", 0)));
+    put(sig_counts, "威廉超卖", int(get(x, "c_wos", 0)));
+    put(sig_counts, "威廉超买", int(get(x, "c_won", 0)));
+    put(sig_counts, "OBV放量", int(get(x, "c_obv", 0)));
+    put(sig_counts, "突破布林上轨", int(get(x, "c_bup", 0)));
+    put(sig_counts, "跌破布林下轨", int(get(x, "c_bdn", 0)));
+  }
   let out = [];
   let i = 0;
   while (i < len(rows) and len(out) < limit) {
@@ -134,7 +161,7 @@ export func signals_payload(limit) {
     put(out[k], "name", get(names, numeric_of(get(out[k], "code", "")), ""));
     k = k + 1;
   }
-  return { ok: true, date: last, count: len(out), signals: out };
+  return { ok: true, date: last, count: len(out), total: total, sig_counts: sig_counts, signals: out };
 }
 
 // ============================================================================

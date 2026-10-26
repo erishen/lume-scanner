@@ -181,21 +181,28 @@ function SignalsTab({ onStock, onInd }: Openers) {
   }, []);
   if (err) return <div className="err">加载失败: {err}</div>;
   if (!data) return <div className="kv">加载中…</div>;
-  if (data.count === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
-  // 汇总全部信号类别 + 计数; 选中时按 OR 过滤(行的 signals 含任一选中类别即保留)
+  // total=全市场带信号总数(未截断), 老后端无 total 时降级为 count
+  const total = data.total ?? data.count;
+  if (total === 0) return <div className="kv">{data.note ?? "当日无信号"}</div>;
+  // 全市场各类别命中数(SQL 条件聚合, 未截断)。只展示 >0 的类别; 老后端无 sig_counts 时降级为按返回行统计。
   const cats = new Map<string, number>();
-  for (const s of data.signals) for (const k of s.signals) cats.set(k, (cats.get(k) ?? 0) + 1);
+  if (data.sig_counts && Object.keys(data.sig_counts).length) {
+    for (const [k, c] of Object.entries(data.sig_counts)) if (c > 0) cats.set(k, c);
+  } else {
+    for (const s of data.signals) for (const k of s.signals) cats.set(k, (cats.get(k) ?? 0) + 1);
+  }
   const activeCats = sel.size ? Array.from(sel) : null;
   const rows = activeCats
     ? data.signals.filter((s) => s.signals.some((k) => sel.has(k)))
     : data.signals;
+  const truncated = total > data.count;
   return (
     <>
       <IndexTicker />
       <PicksCard onStock={onStock} onInd={onInd} />
       <StatsCard />
       <div className="card">
-      <h3>截至 {data.date} · 共 {data.count} 只带信号 <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
+      <h3>截至 {data.date} · 全市场 {total} 只带信号{truncated ? <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}> · 显示前 {data.count} 条</span> : null} <span style={{ textTransform: "none", color: "var(--faint)", fontWeight: 400 }}>· RSI: Lume 现算 Cutler 同口径(Δ≈0 验证移植) + Wilder 跨口径参考</span></h3>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "6px 0" }}>
         <span className="dim" style={{ fontSize: 12 }}>筛选</span>
         {[...cats.entries()].map(([k, c]) => (
