@@ -95,8 +95,9 @@ export func signals_payload(limit, min_sig) {
     "from stock_analysis where date = ? and " + sn + " >= " + str(minn) + " " +
     "order by sig_cnt desc, obv_signal desc, close desc limit ?",
     [last, int(limit)]);
-  // 全市场总数 + 各类别命中数 + 共振分布: 单条 SQL 条件聚合(返回 1 行, 不受 ROW_CAP 截断;
+  // 全市场去重股票数 + 各类别命中数 + 共振分布: 单条 SQL 条件聚合(返回 1 行, 不受 ROW_CAP 截断;
   // 直接数循环行会因 ROW_CAP=200 只能看到 200 行, 得出 170 这种假总数)。
+  // total = sum(SN>=1) = 「至少命中 1 个信号的去重股票数」(表头「N 只」用的就是它; 注意不是 sum(SN)=事件总数)。
   let sig_counts = {};
   let dist = {};
   let total = 0;
@@ -106,7 +107,7 @@ export func signals_payload(limit, min_sig) {
     "sum(rsi_oversold=1) as c_ros, sum(rsi_overbought=1) as c_ron, " +
     "sum(williams_oversold=1) as c_wos, sum(williams_overbought=1) as c_won, " +
     "sum(obv_signal=1) as c_obv, sum(boll_position>1.0) as c_bup, sum(boll_position<0.0) as c_bdn, " +
-    "sum(" + sn + ") as c_total, " +
+    "sum(" + sn + ">=1) as c_total, " +
     "sum(" + sn + ">=2) as g2, sum(" + sn + ">=3) as g3, " +
     "sum(" + sn + ">=4) as g4, sum(" + sn + ">=5) as g5 " +
     "from stock_analysis where date = ?", [last]);
