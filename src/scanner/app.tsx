@@ -8,7 +8,7 @@ import {
 } from "./api";
 import { ChatTab } from "./chat";
 
-type Tab = "signals" | "screen" | "stock" | "indicators" | "chat" | "about";
+type Tab = "signals" | "screen" | "stock" | "indicators" | "chat" | "glossary" | "about";
 
 // ---- 轻量 SVG 折线(null 值断开, 支持多序列)----
 function fmtAxis(v: number): string {
@@ -554,6 +554,121 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
   );
 }
 
+// ---- Tab: 字段说明(各页 UI 字段/信号/口径的定义, 对照 repo.lume 与 ETL 源码核实) ----
+type GlossRow = [field: string, def: string];
+const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
+  {
+    title: "信号扫描页",
+    sub: "信号判定来自 ETL flag 列(stock-analyzer 预计算), 非 Lume 现算",
+    rows: [
+      ["RSI(ETL·Cutler)", "库 rsi 列, Cutler 口径: 涨/跌各取最近 14 个价变的 rolling(14).mean()"],
+      ["RSI(Lume·Cutler)", "Lume 内建 rsi_cutler 现算, 与 ETL 同算法 → Δ0.00 逐位验证移植正确性"],
+      ["RSI(Lume·Wilder)", "Lume 内建 rsi(Wilder EMA: SMA 种子 + 递归), 跨平滑口径参考, 与 Cutler 分叉属正常"],
+      ["一致性 Δ0.00 / Δx.xx", "Cutler 同口径差 <0.05 记 Δ0.00(绿); ≥0.05 显示实际偏差(金)"],
+      ["MACD金叉/死叉", "DIF(12/26 EMA 差) 上/下穿 DEA(9), ETL flag"],
+      ["KDJ金叉", "K 上穿 D (RSV 的 1/3 平滑 EMA), ETL flag"],
+      ["RSI超卖/超买", "ETL Cutler RSI < 30 / > 70"],
+      ["威廉超卖/超买", "Williams %R 破 -80 / 0 区, ETL flag"],
+      ["OBV放量", "OBV(顺逆量)斜率突变, ETL flag"],
+      ["突破布林上轨/跌破下轨", "收盘 > 布林上轨(20日2σ) / < 下轨, ETL boll_position >1 / <0"],
+      ["顶部指数条", "上证/深成/创业板/沪深300 实时点位, 腾讯源 30s 缓存"],
+    ],
+  },
+  {
+    title: "规则筛选页",
+    sub: "字段来自 asset_snapshot(akshare 每日快照); 无过滤时按量比降序 Top 50",
+    rows: [
+      ["量比", "当日成交 ÷ 近 5 日均量, 无单位, >2 表示放量"],
+      ["换手%", "当日成交量 ÷ 流通股本 ×100"],
+      ["总市值(亿) / 流通市值(亿)", "total / float market value, 单位亿元"],
+      ["默认视图", "未填条件 = 全市场量比 Top 50(当日最活跃票)"],
+    ],
+  },
+  {
+    title: "个股页",
+    sub: "K 线表 = 库内 T-1 数据; 实时价卡 = 腾讯源 5s 轮询(服务端 15s 缓存)",
+    rows: [
+      ["量(万)", "库内 volume 单位是「股」, 显示 ÷10000(茅台 576.9 = 577 万股)"],
+      ["MA5 / MA20 / RSI / MACD", "ETL 预计算列(RSI=Cutler, MACD=DIF 12/26/9)"],
+      ["实时卡 量(万手)", "腾讯口径 1 手 = 100 股, 与 K 线表「万股」不同源不同口径"],
+      ["停牌 / 降级", "实时价卡: 停牌显示「停牌或无行情」, 上游挂显示「实时获取失败, 展示库内收盘」"],
+    ],
+  },
+  {
+    title: "指标页 · 摆动类",
+    sub: "全部 Lume 内建现算(读原始 OHLCV, 不读 ETL 列), 周期 = 表单 period 缺省 14",
+    rows: [
+      ["KDJ · K / D / J", "RSV 的 1/3 平滑 EMA; J = 3K−2D, J>100 超买 / <0 超卖区"],
+      ["Williams %R", "收盘在 N 日高低区间的位置, 值域 [−100, 0](0=贴高点, −100=贴低点)"],
+      ["ATR", "真实波幅的 N 日均值, 量纲=价格, 衡量波动大小区间"],
+      ["OBV", "顺逆量: 涨日累加量、跌日累减, 有符号累计, 看量价配合"],
+    ],
+  },
+  {
+    title: "指标页 · 趋势类",
+    sub: "前导冷启动段被服务端截掉, 图上各序列按尾部对齐最新交易日",
+    rows: [
+      ["MA5 / MA10 / MA20", "简单移动均线"],
+      ["MACD · line / signal / hist", "DIF(12/26 EMA 差) / DEA(DIF 的 9 日 EMA) / 柱(DIF−DEA)"],
+      ["RSI · Wilder / Cutler", "双曲线对照: Wilder 更平滑(EMA), Cutler 更敏感(滚动均值), 与 ETL 列同口径的是 Cutler"],
+      ["布林带 · mid / upper / lower", "20 日均 ± 2σ, 贴上轨偏强 / 贴下轨偏弱"],
+    ],
+  },
+  {
+    title: "指标页 · 绩效/风险九宫格",
+    sub: "基于日收益序列, 年化系数 ×√252≈15.87, 夏普无风险利率取 0",
+    rows: [
+      ["累计收益% / 年化收益%", "区间总涨幅 / 几何年化"],
+      ["年化波动%", "日收益标准差 × √252"],
+      ["夏普 / Sortino", "(年化−0)÷年化波动; Sortino 分母只算下行标准差"],
+      ["Calmar", "年化收益 ÷ 最大回撤"],
+      ["最大回撤%", "峰值到谷底最大跌幅"],
+      ["VaR95(日) / CVaR95(日)", "95% 置信单日预期损失 / 超 VaR 那 5% 的平均损失(尾部, ≥VaR)"],
+    ],
+  },
+  {
+    title: "Lume 信号判定(指标页)",
+    sub: "基于刚算出序列的「尾值」, 与信号页 ETL 口径互相独立, 可互验",
+    rows: [
+      ["MACD金叉/死叉(Lume)", "DIF 与 DEA 尾两根交叉(用刚现算的 MACD)"],
+      ["RSI超卖/超买(Wilder 14)", "现算 Wilder RSI < 30 / > 70"],
+      ["破布林上/下轨", "最新收盘 > upper / < lower"],
+      ["KDJ金叉", "K 上穿 D(尾两根)"],
+    ],
+  },
+  {
+    title: "通用约定",
+    sub: "",
+    rows: [
+      ["配色", "A 股习惯: 红涨绿跌"],
+      ["行点击", "信号/筛选表整行可点 → 个股页; 「个股/指标」按钮 → 对应 tab(代码自动带入)"],
+      ["数据时效", "K线/指标/信号 = 库内 T-1(每日 18:30 launchd ETL 更新); 指数条/实时卡 = 盘中准实时"],
+    ],
+  },
+];
+
+function GlossaryTab() {
+  return (
+    <div className="glossary">
+      {GLOSS_SECTIONS.map((s) => (
+        <div className="card" key={s.title}>
+          <h3>{s.title}{s.sub ? <span> · {s.sub}</span> : null}</h3>
+          <table>
+            <tbody>
+              {s.rows.map(([f, d]) => (
+                <tr key={f}>
+                  <td className="gloss-field">{f}</td>
+                  <td>{d}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---- Tab 6: 数据源 ----
 function AboutTab() {
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -589,6 +704,7 @@ export function App() {
     ["stock", "个股"],
     ["indicators", "指标"],
     ["chat", "AI 聊天"],
+    ["glossary", "字段说明"],
     ["about", "数据源"],
   ];
   const active = useMemo(() => tabs.find(([t]) => t === tab)?.[1] ?? "", [tab]);
@@ -609,6 +725,7 @@ export function App() {
         {tab === "stock" && <StockTab seed={focus} onQuery={query} />}
         {tab === "indicators" && <IndicatorsTab seed={focus} onQuery={query} />}
         {tab === "chat" && <ChatTab />}
+        {tab === "glossary" && <GlossaryTab />}
         {tab === "about" && <AboutTab />}
       </div>
       <div className="note">{active === "信号扫描" ? "MACD/KDJ 金叉、RSI/威廉超买卖、布林带突破、OBV 放量口径同 stock-analyzer ETL" : ""}</div>

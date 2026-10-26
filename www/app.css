@@ -321,6 +321,14 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 /* ---- 表格全量展开按钮 ---- */
 .toggle-all { margin-top: 8px; font-size: 12px; }
 
+/* ---- 字段说明 tab ---- */
+.glossary { display: grid; gap: 12px; }
+.glossary h3 span { font-weight: 400; color: var(--faint); font-size: 11px; }
+.glossary table { width: 100%; border-collapse: collapse; }
+.glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 12.5px; vertical-align: top; }
+.glossary tr:last-child td { border-bottom: 0; }
+.glossary .gloss-field { width: 34%; min-width: 180px; color: var(--text); font-weight: 600; white-space: nowrap; }
+
 /* ---- 滚动条 ---- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
