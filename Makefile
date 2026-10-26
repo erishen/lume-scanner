@@ -56,6 +56,15 @@ typecheck:
 
 ui:
 	@$(ESBUILD) src/scanner/app.tsx --bundle --minify --format=esm --jsx=automatic --outdir=www --outbase=src/scanner
+	@$(call bump_cache_stamp)
+	@echo "✓ 已构建 www/app.js + 缓存戳 ?v=$(STAMP) (make ui 自动生成, 免手改 index.html)"
+
+# 缓存戳: 把 www/index.html 里所有 "?v=<旧戳>" 原地改成当前时间戳。
+# 幂等 —— 无论旧值是手写的还是上次 build 生成的都能匹配, 杜绝"忘改戳→用户拿旧 bundle"。
+STAMP := $(shell date +%Y%m%d%H%M)
+define bump_cache_stamp
+	@sed -Ei.bak 's|\?v=[^&"]*|?v=$(STAMP)|g' www/index.html && rm -f www/index.html.bak
+endef
 
 # 非 minify 本地构建(排前端 bug 用)。只覆盖 www/app.js,排完再 make ui 重新 minify。
 ui-dev:

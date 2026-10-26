@@ -42,7 +42,13 @@ func names_map(codes) {
 }
 
 // ---- 数据源元信息(最新交易日/标的数/行数) ----
+// 5min 缓存: 该查询对 8.5M 行全表 count(*)+count(distinct) 约 0.7s, 而数据每日
+// 只变一次 —— 首拉 0.7s, 缓存后 ~1ms。
+let META_CACHE = { exp: 0, data: null };
 export func meta_payload() {
+  if (int(get(META_CACHE, "exp", 0)) >= now() and get(META_CACHE, "data", null) != null) {
+    return get(META_CACHE, "data", null);
+  }
   let db = db_scan();
   let ad = db_asset();
   let d = sql_query(db, "select max(date) as latest, count(distinct code) as stocks, count(*) as rows from stock_analysis");
@@ -57,7 +63,10 @@ export func meta_payload() {
   let a = sql_query(ad, "select count(*) as n from asset_snapshot");
   let n = 0;
   if (len(a) > 0) { n = int(get(a[0], "n", 0)); }
-  return { ok: true, latest_date: latest, stocks: stocks, analysis_rows: arows, asset_rows: n };
+  let payload = { ok: true, latest_date: latest, stocks: stocks, analysis_rows: arows, asset_rows: n };
+  put(META_CACHE, "exp", now() + 300);
+  put(META_CACHE, "data", payload);
+  return payload;
 }
 
 // ---- 全市场信号扫描: 最近一个交易日, 遍历 ETL 已算好的 flag 列分类 ----
