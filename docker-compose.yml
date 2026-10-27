@@ -12,7 +12,9 @@
 # 或一条命令: cd work/lume/lume-scanner && make docker
 #
 # 数据: 真实双库经 ${STOCKANALYZER_DATA} 只读挂载进 /app/data;
-#       SCANNER_DB/ASSET_DB 指向其中; 未设 STOCKANALYZER_DATA 则回退内置 .data 样例库。
+#       SCANNER_DB/ASSET_DB 指向其中。默认 .data(中性样例目录, 无本机路径);
+#       本机生产/开发在 gitignored 的 .env 里设 STOCKANALYZER_DATA 指向真实
+#       stock-analyzer/data (路径含用户名, 故不进仓库, 见 .env.example)。
 
 services:
   lume-scanner:
@@ -25,8 +27,10 @@ services:
       # 需局域网/外网共享时显式 PORT=0.0.0.0:18094 make docker-up 并配合 HTPASSWD_FILE。
       - "127.0.0.1:${PORT:-18094}:8094"
     # 真实全量库只读挂载 (OrbStack/FUSE 原生, DELETE journal 无 -wal/-shm, ro 安全)
+    # 默认指向中性样例目录 .data (不暴露本机绝对路径, 分享仓库无 PII);
+    # 本机生产/开发在 gitignored 的 .env 里设 STOCKANALYZER_DATA 指向真实 stock-analyzer/data。
     volumes:
-      - ${STOCKANALYZER_DATA:-/Users/erishen/Workspace/CNB/individular-invest/invest-kit/apps/stock-analyzer/data}:/app/data:ro
+      - ${STOCKANALYZER_DATA:-.data}:/app/data:ro
       # 前端 bundle 走宿主实时文件(改 app.tsx → make ui 即生效, 无需重建镜像);
       # 镜像内置 www/ 仅作无挂载时的 fallback。
       - ./www:/app/www:ro
