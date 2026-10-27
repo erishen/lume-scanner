@@ -374,3 +374,41 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- 信号页卡片视图(80 只快速浏览; 点卡片跳个股) ---- */
+.sig-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+  padding-top: 6px;
+}
+.sig-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color .15s, transform .15s;
+}
+.sig-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.sc-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sc-code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--blue); }
+.sc-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.sc-reso {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--blue);
+  border: 1px solid #1f6feb55;
+}
+.sc-reso.hot { background: #f8514922; color: #ff7b72; border-color: #f8514955; font-weight: 600; }
+.sc-price { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; }
+.sc-price span:first-child { font-size: 20px; font-weight: 700; color: var(--text); }
+.sc-price .up { color: var(--up); } .sc-price .down { color: var(--down); }
+.sc-mid { display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.sc-chips { min-height: 22px; }
+.sc-chips .chip { font-size: 11px; padding: 1px 7px; }
+.sc-act { margin-top: 6px; }
+.sc-act .ghost { font-size: 12px; padding: 2px 8px; }

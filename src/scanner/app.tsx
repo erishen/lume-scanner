@@ -169,6 +169,14 @@ function SignalsTab({ onStock, onInd }: Openers) {
   // 客户端信号类别筛选: 点 chip 只显示含该信号的行(多类别 OR); 纯前端零接口。
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [minSig, setMinSig] = useState(2); // 共振度阈值: 默认只看同时命中≥2个信号的票
+  // 视图切换: 表格(全字段精读) / 卡片(快速浏览 80 只); 选择记 localStorage 跨刷新保留
+  const [view, setView] = useState<"table" | "card">(() => {
+    try { return localStorage.getItem("sigview") === "card" ? "card" : "table"; } catch { return "table"; }
+  });
+  const switchView = (v: "table" | "card") => {
+    setView(v);
+    try { localStorage.setItem("sigview", v); } catch {}
+  };
   const togg = (k: string) =>
     setSel((s) => {
       const n = new Set(s);
@@ -203,7 +211,13 @@ function SignalsTab({ onStock, onInd }: Openers) {
       <PicksCard onStock={onStock} onInd={onInd} />
       <StatsCard />
       <div className="card">
-      <h3>截至 {data.date} · 全市场 {total} 只带信号 · 当前显示前 {data.count} 条(按共振度降序)</h3>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "4px 0" }}>
+        <h3 style={{ margin: 0, flex: 1, minWidth: 260 }}>截至 {data.date} · 全市场 {total} 只带信号 · 当前显示前 {data.count} 条(按共振度降序)</h3>
+        <span style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+          <button className="ghost" style={{ border: "none", background: view === "table" ? "var(--accent-soft)" : "transparent", color: view === "table" ? "var(--blue)" : "var(--muted)" }} onClick={() => switchView("table")} title="逐行全字段, 适合精读 RSI 三口径">表格</button>
+          <button className="ghost" style={{ border: "none", background: view === "card" ? "var(--accent-soft)" : "transparent", color: view === "card" ? "var(--blue)" : "var(--muted)" }} onClick={() => switchView("card")} title="卡片网格, 快速浏览 80 只">卡片</button>
+        </span>
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", margin: "6px 0" }}>
         <span className="dim" style={{ fontSize: 12 }}>共振度</span>
         {[1, 2, 3, 4, 5].map((m) => {
@@ -238,6 +252,47 @@ function SignalsTab({ onStock, onInd }: Openers) {
         )}
         {sel.size === 0 && <span className="dim" style={{ fontSize: 12 }}>· 点类别可筛选</span>}
       </div>
+      {view === "card" && (
+        <div className="sig-cards">
+          {rows.length === 0 && (
+            <div className="dim" style={{ padding: 18, textAlign: "center" }}>
+              所选类别今日无命中 · <a style={{ color: "var(--up)", cursor: "pointer" }} onClick={() => setSel(new Set())}>清除筛选</a>
+            </div>
+          )}
+          {rows.map((s) => {
+            const up = (s.change ?? 0) >= 0;
+            return (
+              <div key={s.code} className="sig-card" onClick={() => onStock(s.code)}>
+                <div className="sc-top">
+                  <span className="sc-code">{s.code}</span>
+                  <span className="sc-name">{s.name || "—"}</span>
+                  <span className={`sc-reso ${s.sig_cnt >= 4 ? "hot" : ""}`} title={`同时命中 ${s.sig_cnt ?? s.signals.length} 个信号`}>
+                    {s.sig_cnt ?? s.signals.length}信号
+                  </span>
+                </div>
+                <div className="sc-price">
+                  <span>{(s.close ?? 0).toFixed(2)}</span>
+                  <span className={cls(s.change ?? 0)}>{up ? "▲" : "▼"} {Math.abs(s.change ?? 0).toFixed(2)}%</span>
+                </div>
+                <div className="sc-mid">
+                  <span title="RSI(ETL·Cutler)">RSI <Num v={s.rsi} /></span>
+                  <span title="RSI(Lume·Cutler, 与 ETL 同口径, Δ≈0 验证移植正确性)">
+                    {s.rsi_lume == null ? "—" : s.rsi_match === "match"
+                      ? <span className="chip green">Δ0.00</span>
+                      : <span className="chip gold">Δ{Math.abs((s.rsi_lume ?? 0) - s.rsi).toFixed(2)}</span>}
+                  </span>
+                </div>
+                <div className="sc-chips"><Chips items={s.signals} /></div>
+                <div className="sc-act" onClick={(e) => e.stopPropagation()}>
+                  <button className="ghost" onClick={() => onStock(s.code)}>个股</button>{" "}
+                  <button className="ghost" onClick={() => onInd(s.code)}>指标</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {view === "table" && (
       <table>
         <thead>
           <tr><th>代码</th><th>名称</th><th>收盘</th><th>涨跌%</th><th title="同时命中几个信号(0-9), 按此降序">共振</th><th>RSI(ETL·Cutler)</th><th>RSI(Lume·Cutler)</th><th>RSI(Lume·Wilder)</th><th>一致性</th><th>信号</th><th>操作</th></tr>
@@ -273,6 +328,7 @@ function SignalsTab({ onStock, onInd }: Openers) {
           ))}
         </tbody>
       </table>
+      )}
       </div>
     </>
   );
