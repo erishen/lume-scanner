@@ -1236,7 +1236,7 @@ const refL = { strokeDasharray: "3 3", stroke: "var(--faint)", strokeWidth: 1 } 
 function FigResonance() {
   const d: [string, number, number][] = [["≥1", 4603, 40], ["≥2", 2286, 30], ["≥3", 544, 18], ["≥4", 106, 12], ["≥5", 15, 7]];
   return (
-    <svg viewBox="0 0 150 62" className="gloss-fig">
+    <svg viewBox="0 -8 150 70" className="gloss-fig">
       {d.map(([lab, cnt, h], i) => (
         <g key={lab} transform={`translate(${6 + i * 29},0)`}>
           <rect x={0} y={46 - h} width={20} height={h} rx={2} fill={i === 0 ? "var(--faint)" : FIG.up} opacity={0.8} />

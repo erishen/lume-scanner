@@ -325,7 +325,7 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .cold-hint { color: var(--muted); font-size: 12px; font-style: italic; }
 
 /* ---- 字段说明 tab ---- */
-.glossary { display: grid; gap: 12px; }
+.glossary { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
 /* grid item(card)默认 min-width:auto 会因表格/SVG 内容撑出右边界 → 强制 0 让其能收缩 */
 .glossary > .card { min-width: 0; }
 .glossary h3 span { font-weight: 400; color: var(--faint); font-size: 12px; }
@@ -334,12 +334,12 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
 .glossary tr:last-child td { border-bottom: 0; }
 .glossary .gloss-field { width: 34%; color: var(--text); font-weight: 600; }
-/* SVG 示意图: 充满定义列且随列收缩(窄屏自动变小, 永不出界); 圆角底 */
+/* SVG 示意图: 比原 150px 更大(300px 清晰可读)但不撑满整列, 窄屏随列收缩出界; 圆角底 */
 .gloss-fig {
   display: block;
-  width: 100%;
-  height: auto;
+  width: 300px;
   max-width: 100%;
+  height: auto;
   margin: 8px 0 2px;
   background: var(--bg);
   border: 1px solid var(--border-soft);
