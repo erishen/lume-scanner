@@ -1109,113 +1109,355 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
 }
 
 // ---- Tab: 字段说明(各页 UI 字段/信号/口径的定义, 对照 repo.lume 与 ETL 源码核实) ----
+// 每条定义都尽量「说人话」: 先说是什么、再给怎么读/举例。
 type GlossRow = [field: string, def: string];
 const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
   {
     title: "信号扫描页",
-    sub: "信号判定来自 ETL flag 列(stock-analyzer 预计算), 非 Lume 现算",
+    sub: "页面顶部有指数条; 信号列都是 stock-analyzer 的 ETL 端预先算好存进库的, 页面只负责展示, 不现算",
     rows: [
-      ["RSI(ETL·Cutler)", "库 rsi 列, Cutler 口径: 涨/跌各取最近 14 个价变的 rolling(14).mean()"],
-      ["RSI(Lume·Cutler)", "Lume 内建 rsi_cutler 现算, 与 ETL 同算法 → Δ0.00 逐位验证移植正确性"],
-      ["RSI(Lume·Wilder)", "Lume 内建 rsi(Wilder EMA: SMA 种子 + 递归), 跨平滑口径参考, 与 Cutler 分叉属正常"],
-      ["一致性 Δ0.00 / Δx.xx", "Cutler 同口径差 <0.05 记 Δ0.00(绿); ≥0.05 显示实际偏差(金)"],
-      ["MACD金叉/死叉", "DIF(12/26 EMA 差) 上/下穿 DEA(9), ETL flag"],
-      ["KDJ金叉", "K 上穿 D (RSV 的 1/3 平滑 EMA), ETL flag"],
-      ["RSI超卖/超买", "ETL Cutler RSI < 30 / > 70"],
-      ["威廉超卖/超买", "Williams %R 破 -80 / 0 区, ETL flag"],
-      ["OBV放量", "OBV(顺逆量)斜率突变, ETL flag"],
-      ["突破布林上轨/跌破下轨", "收盘 > 布林上轨(20日2σ) / < 下轨, ETL boll_position >1 / <0"],
-      ["顶部指数条", "上证/深成/创业板/沪深300 实时点位, 腾讯源 30s 缓存"],
+      ["共振度（命中数）", "这只票当天「同时命中」几个信号。全市场命中≥1 的有 4000+ 只（占 83%），几乎没有筛选价值，所以默认只看 ≥2 个的；命中数越大越值得关注，≥4 会用红色「热点」标记。列表默认展示命中数最高的 80 只。"],
+      ["今日精选（打分）", "在「命中≥1」的股票池里，按 信号数 × 量比 × 市值 综合打分取 Top 8，相当于「当天最可能被主力关注、又足够活跃好进出」的一批。"],
+      ["RSI(ETL·Cutler)", "库里 rsi 列的值。Cutler 口径 = 最近 14 个「价格涨跌」里，上涨部分的均值 ÷ 下跌部分的均值。是 ETL 端算好存库的。"],
+      ["RSI(Lume·Cutler)", "页面用 Lume 内建 rsi_cutler 按「同一套」Cutler 算法再算一遍，专门用来核对 ETL 算得对不对。"],
+      ["RSI(Lume·Wilder)", "再按另一套 Wilder 算法（指数平滑，曲线更顺滑）现算，做对照参考。它和 Cutler 差一点是正常的，不代表谁对谁错。"],
+      ["一致性 Δ0.00 / Δx.xx", "上面两个 Cutler 口径（ETL 存库 vs 页面现算）的差。差 <0.05 显示「Δ0.00」（绿）= 移植无误；差 ≥0.05 显示实际偏差值（金）= 需要留意。"],
+      ["MACD金叉 / 死叉", "MACD 快线上穿慢线=金叉（偏多），下穿=死叉（偏空）。"],
+      ["KDJ金叉", "KDJ 指标的 K 线上穿 D 线，随机指标的短线买点信号。"],
+      ["RSI超卖 / 超买", "Cutler RSI <30=超卖（跌得有点多了），>70=超买（涨得有点多了）。"],
+      ["威廉超卖 / 超买", "Williams %R 指标 < −80=超卖，> −20=超买。注意它的取值区间是 −100~0，数字越小越超卖。"],
+      ["OBV放量", "OBV（顺逆量）突然放大，往往代表有资金异动。"],
+      ["突破布林上轨 / 跌破下轨", "收盘价突破 20 日布林带（均值±2 倍标准差）的上轨=偏强势；跌破下轨=偏弱势。"],
+      ["顶部指数条", "上证指数 / 深证成指 / 创业板指 / 沪深300 的实时点位，腾讯源 30s 缓存。"],
     ],
   },
   {
     title: "规则筛选页",
-    sub: "字段来自 asset_snapshot(akshare 每日快照); 无过滤时按量比降序 Top 50",
+    sub: "字段来自 asset_snapshot（akshare 每日快照）；一个条件都不填时，直接给你全市场量比最高的 50 只",
     rows: [
-      ["量比", "当日成交 ÷ 近 5 日均量, 无单位, >2 表示放量"],
-      ["换手%", "当日成交量 ÷ 流通股本 ×100"],
-      ["总市值(亿) / 流通市值(亿)", "total / float market value, 单位亿元"],
-      ["默认视图", "未填条件 = 全市场量比 Top 50(当日最活跃票)"],
+      ["量比", "今天每分钟成交量 ÷ 过去 5 天每分钟平均成交量。无单位，>2 代表明显放量、比平时活跃。"],
+      ["换手%", "今天成交量 ÷ 流通股本。数值越高代表当天筹码交换越剧烈。"],
+      ["总市值(亿) / 流通市值(亿)", "总市值=股价×总股本，流通市值=股价×流通股本，都按亿元显示。"],
+      ["默认视图", "啥都不填 = 全市场量比 Top 50，也就是「当天最活跃」的一批票。"],
     ],
   },
   {
     title: "个股页",
-    sub: "K 线表 = 库内 T-1 数据; 实时价卡 = 腾讯源 5s 轮询(服务端 15s 缓存)",
+    sub: "K 线表 = 库里 T-1（前一天收盘）数据，按最新交易日倒序；实时价卡 = 腾讯源盘中刷新",
     rows: [
-      ["量(万)", "库内 volume 单位是「股」, 显示 ÷10000(茅台 576.9 = 577 万股)"],
-      ["MA5 / MA20 / RSI / MACD", "ETL 预计算列(RSI=Cutler, MACD=DIF 12/26/9)"],
-      ["「上市不足5日/20日」「不足14日」斜体提示", "rolling 指标冷启动: 上市初期历史长度不够窗口, ETL 计算得 NULL(前 4/19/13 个交易日), 属正常数据行为, 非缺失故障"],
-      ["实时卡 量(万手)", "腾讯口径 1 手 = 100 股, 与 K 线表「万股」不同源不同口径"],
-      ["停牌 / 降级", "实时价卡: 停牌显示「停牌或无行情」, 上游挂显示「实时获取失败, 展示库内收盘」"],
+      ["量(万)", "库里 volume 的单位是「股」，显示时 ÷10000 换成「万股」。例：576.9 就是 577 万股。"],
+      ["MA5 / MA20 / RSI / MACD", "这些列都是 ETL 预先算好存库的（RSI=Cutler 口径，MACD=DIF 12/26/9）。"],
+      ["「上市不足5日/20日」「不足14日」斜体提示", "刚上市的票历史不够指标计算窗口，前几个交易日这些指标为空（NULL）。这是正常的数据行为，不是故障。"],
+      ["实时卡 量(万手)", "腾讯口径里 1 手 = 100 股，和上面 K 线表的「万股」不是同一个源、不同口径，两个数字不能直接比。"],
+      ["停牌 / 降级", "实时价卡：票停牌会显示「停牌或无行情」；上游数据源挂了会显示「实时获取失败，展示库内收盘」。"],
+    ],
+  },
+  {
+    title: "模拟仓页",
+    sub: "读 stock-analyzer 的 paper_portfolio.json（每日 18:30 paper-auto 自动更新），现价走腾讯实时源，盈亏现场算",
+    rows: [
+      ["成本", "买入均价（含摊入的手续费）。"],
+      ["现价", "腾讯实时源报价（服务端 15s 缓存）。"],
+      ["浮动盈亏 / 盈亏%", "(现价 − 成本) × 股数，以及 ÷ 成本 ×100，都是现场算的。"],
+      ["止损 / 止盈", "成本 ×(1 − 止损线) / ×(1 + 止盈线)，止损线默认 −8%。现价一旦跌破止损，右侧会出现红色「触发止损」标记。"],
+      ["持仓市值 / 总权益 / 累计盈亏(率)", "各持仓市价之和 / 再加现金得到总权益 / 相对初始资金（10 万）的盈亏。"],
+      ["挂单", "自动交易（paper-auto）已经决策、但要等下一次 paper-auto 运行才成交的买卖指令。表里列出 代码 / 名称 / 信号日 / 原因（为什么触发）。"],
+      ["已平仓 笔", "历史已卖出的交易笔数。"],
     ],
   },
   {
     title: "指标页 · 摆动类",
-    sub: "全部 Lume 内建现算(读原始 OHLCV, 不读 ETL 列), 周期 = 表单 period 缺省 14",
+    sub: "全部由 Lume 内建函数现算（读原始 OHLCV，不读 ETL 存库列），周期 = 顶部表单的 period，缺省 14",
     rows: [
-      ["KDJ · K / D / J", "RSV 的 1/3 平滑 EMA; J = 3K−2D, J>100 超买 / <0 超卖区"],
-      ["Williams %R", "收盘在 N 日高低区间的位置, 值域 [−100, 0](0=贴高点, −100=贴低点)"],
-      ["ATR", "真实波幅的 N 日均值, 量纲=价格, 衡量波动大小区间"],
-      ["OBV", "顺逆量: 涨日累加量、跌日累减, 有符号累计, 看量价配合"],
+      ["KDJ · K / D / J", "K、D 是 RSV 的 1/3 平滑 EMA；J = 3K − 2D。J >100 属超买区，<0 属超卖区。"],
+      ["Williams %R", "衡量收盘价在 N 日高低区间里的位置，取值 [−100, 0]：0=贴区间高点，−100=贴低点。"],
+      ["ATR", "真实波幅的 N 日均值，单位是价格（不是百分比），用来衡量这只票波动幅度的大小。"],
+      ["OBV", "顺逆量：涨日把成交量加上、跌日减去，是有符号的累计值，用来观察量价是否配合。"],
     ],
   },
   {
     title: "指标页 · 趋势类",
-    sub: "前导冷启动段被服务端截掉, 图上各序列按尾部对齐最新交易日",
+    sub: "序列开头那段冷启动（数据不够算不出来的部分）会被服务端截掉，图上各曲线都按「最新交易日」对齐到右边",
     rows: [
-      ["MA5 / MA10 / MA20", "简单移动均线"],
-      ["MACD · line / signal / hist", "DIF(12/26 EMA 差) / DEA(DIF 的 9 日 EMA) / 柱(DIF−DEA)"],
-      ["RSI · Wilder / Cutler", "双曲线对照: Wilder 更平滑(EMA), Cutler 更敏感(滚动均值), 与 ETL 列同口径的是 Cutler"],
-      ["布林带 · mid / upper / lower", "20 日均 ± 2σ, 贴上轨偏强 / 贴下轨偏弱"],
+      ["MA5 / MA10 / MA20", "简单移动均线：过去 5/10/20 日收盘价的平均。"],
+      ["MACD · line / signal / hist", "line=DIF（12 日 EMA − 26 日 EMA）；signal=DEA（DIF 的 9 日 EMA）；hist=柱（DIF − DEA）。"],
+      ["RSI · Wilder / Cutler", "两条曲线对照：Wilder 更平滑（指数平滑），Cutler 更敏感（滚动均值）。和 ETL 存库列同口径的是 Cutler。"],
+      ["布林带 · mid / upper / lower", "mid=20 日均值；upper/lower=均值 ± 2 倍标准差。贴上轨偏强、贴下轨偏弱。"],
     ],
   },
   {
-    title: "指标页 · 绩效/风险九宫格",
-    sub: "基于日收益序列, 年化系数 ×√252≈15.87, 夏普无风险利率取 0",
+    title: "指标页 · 绩效 / 风险九宫格",
+    sub: "基于日收益率序列计算，年化系数 ×√252 ≈ 15.87；夏普比率无风险利率取 0",
     rows: [
-      ["累计收益% / 年化收益%", "区间总涨幅 / 几何年化"],
-      ["年化波动%", "日收益标准差 × √252"],
-      ["夏普 / Sortino", "(年化−0)÷年化波动; Sortino 分母只算下行标准差"],
-      ["Calmar", "年化收益 ÷ 最大回撤"],
-      ["最大回撤%", "峰值到谷底最大跌幅"],
-      ["VaR95(日) / CVaR95(日)", "95% 置信单日预期损失 / 超 VaR 那 5% 的平均损失(尾部, ≥VaR)"],
+      ["累计收益% / 年化收益%", "区间总涨幅 / 几何年化。"],
+      ["年化波动%", "日收益的标准差 × √252。"],
+      ["夏普 / Sortino", "都是 (年化收益 − 0) ÷ 年化波动；Sortino 的分母只算「下行」标准差（更看重亏损方向）。"],
+      ["Calmar", "年化收益 ÷ 最大回撤，衡量承担回撤换来的收益。"],
+      ["最大回撤%", "从净值峰值跌到谷底的最大跌幅。"],
+      ["VaR95(日) / CVaR95(日)", "95% 置信下「最坏单日」预期损失 / 超过 VaR 的那 5% 日子的平均损失（尾部更凶）。"],
     ],
   },
   {
-    title: "Lume 信号判定(指标页)",
-    sub: "基于刚算出序列的「尾值」, 与信号页 ETL 口径互相独立, 可互验",
+    title: "Lume 信号判定（指标页）",
+    sub: "基于「刚刚现算」出来的序列尾值做判断，和信号页的 ETL 口径是两套独立系统，可以互相印证",
     rows: [
-      ["MACD金叉/死叉(Lume)", "DIF 与 DEA 尾两根交叉(用刚现算的 MACD)"],
-      ["RSI超卖/超买(Wilder 14)", "现算 Wilder RSI < 30 / > 70"],
-      ["破布林上/下轨", "最新收盘 > upper / < lower"],
-      ["KDJ金叉", "K 上穿 D(尾两根)"],
+      ["MACD金叉/死叉(Lume)", "刚现算的 DIF 与 DEA 在尾两根发生交叉。"],
+      ["RSI超卖/超买(Wilder 14)", "刚现算的 Wilder RSI <30 / >70。"],
+      ["破布林上/下轨", "最新收盘 > upper / < lower。"],
+      ["KDJ金叉", "刚现算的 K 上穿 D（尾两根）。"],
+    ],
+  },
+  {
+    title: "数据新鲜度卡片",
+    sub: "在信号页顶部，提示三个库各自「上次是什么时候刷新」的",
+    rows: [
+      ["更新时间", "该库最近一次成功刷新的时间。asset_snapshot 是每天 18:30 自动刷，超过 3 天会标红提醒你数据可能过期。"],
+      ["最新交易日 / 行数", "K 线库与资产快照库各自的最新数据日期和总行数。"],
     ],
   },
   {
     title: "通用约定",
     sub: "",
     rows: [
-      ["配色", "A 股习惯: 红涨绿跌"],
-      ["行点击", "信号/筛选表整行可点 → 个股页; 「个股/指标」按钮 → 对应 tab(代码自动带入)"],
-      ["数据时效", "K线/指标/信号 = 库内 T-1(每日 18:30 launchd ETL 更新); 指数条/实时卡 = 盘中准实时"],
+      ["配色", "A 股习惯：红涨绿跌（红=涨，绿=跌）。"],
+      ["行点击", "信号 / 筛选表整行可点 → 跳到个股页；行内「个股 / 指标」按钮 → 跳到对应 tab 并自动带入代码。"],
+      ["数据时效", "K线 / 指标 / 信号 = 库里 T-1（前一天，每日 18:30 ETL 更新）；指数条 / 实时价卡 / 模拟仓现价 = 盘中准实时。"],
     ],
   },
 ];
 
+// ---- 字段说明页: 内嵌 SVG 示意(零依赖, 与 K 线图同风格; 只挑「看图最直观」的字段配) ----
+const FIG = { up: "#f85149", down: "#3fb950", blue: "#58a6ff", warn: "#d29922" };
+const figStyle = { display: "block" as const, margin: "6px 0 2px", background: "var(--bg)", border: "1px solid var(--border-soft)", borderRadius: 8 };
+// 轴/参考线通用样式
+const axis = { stroke: "var(--border)", strokeWidth: 1 } as const;
+const refL = { strokeDasharray: "3 3", stroke: "var(--faint)", strokeWidth: 1 } as const;
+
+// 共振度分布: ≥1~≥5 命中数递减(数值为当日示例)
+function FigResonance() {
+  const d: [string, number, number][] = [["≥1", 4603, 40], ["≥2", 2286, 30], ["≥3", 544, 18], ["≥4", 106, 12], ["≥5", 15, 7]];
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      {d.map(([lab, cnt, h], i) => (
+        <g key={lab} transform={`translate(${6 + i * 29},0)`}>
+          <rect x={0} y={46 - h} width={20} height={h} rx={2} fill={i === 0 ? "var(--faint)" : FIG.up} opacity={0.8} />
+          <text x={10} y={42 - h} textAnchor="middle" fontSize={7} fill="var(--text)">{cnt}</text>
+          <text x={10} y={56} textAnchor="middle" fontSize={8} fill="var(--muted)">{lab}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+// MACD: DIF 上穿 DEA = 金叉(柱由绿翻红)
+function FigMACD() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={34} y2={34} {...axis} />
+      <path d="M4 44 C 40 40, 58 32, 76 24 S 120 14, 146 10" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <path d="M4 38 C 40 36, 64 33, 82 28 S 124 22, 146 19" fill="none" stroke={FIG.warn} strokeWidth={2} />
+      <line x1={78} y1={6} x2={78} y2={34} {...refL} />
+      <text x={82} y={14} fontSize={8} fill={FIG.up}>金叉</text>
+      <text x={4} y={12} fontSize={8} fill={FIG.blue}>DIF(快)</text>
+      <text x={4} y={54} fontSize={8} fill={FIG.warn}>DEA(慢)</text>
+    </svg>
+  );
+}
+// KDJ: K 上穿 D
+function FigKDJ() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={10} y2={10} {...refL} /><text x={120} y={8} fontSize={7} fill="var(--faint)">100</text>
+      <line x1={0} x2={150} y1={52} y2={52} {...refL} /><text x={120} y={58} fontSize={7} fill="var(--faint)">0</text>
+      <path d="M4 48 C 30 44, 50 30, 70 40 S 110 52, 146 34" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <path d="M4 44 C 30 40, 52 36, 72 42 S 112 48, 146 40" fill="none" stroke={FIG.warn} strokeWidth={2} />
+      <line x1={71} y1={36} x2={71} y2={48} {...refL} />
+      <text x={75} y={34} fontSize={8} fill={FIG.up}>K 上穿 D</text>
+    </svg>
+  );
+}
+// RSI: 70/30 阈值带, 线跌破 30 = 超卖
+function FigRSI() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={14} y2={14} {...refL} /><text x={122} y={12} fontSize={7} fill={FIG.down}>70 超买</text>
+      <line x1={0} x2={150} y1={46} y2={46} {...refL} /><text x={122} y={52} fontSize={7} fill={FIG.up}>30 超卖</text>
+      <path d="M4 30 C 24 24, 40 36, 58 30 S 92 22, 110 40 S 134 54, 146 50" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <circle cx={122} cy={47} r={2.5} fill={FIG.up} />
+    </svg>
+  );
+}
+// Williams %R: 0~−100 刻度, 破 −80 超卖
+function FigWilliams() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      {[["0", 10, FIG.down], ["−20", 20, FIG.warn], ["−80", 44, FIG.up], ["−100", 56, FIG.up]].map(([lab, y]) => (
+        <g key={String(lab)}>
+          <line x1={0} x2={14} y1={Number(y)} y2={Number(y)} {...axis} />
+          <text x={16} y={Number(y) + 3} fontSize={7} fill="var(--muted)">{lab}</text>
+        </g>
+      ))}
+      <path d="M34 18 C 56 16, 70 30, 86 38 S 124 52, 146 48" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <text x={96} y={58} fontSize={7} fill={FIG.up}>破 −80 = 超卖</text>
+    </svg>
+  );
+}
+// 布林带: 价线上穿 mid±2σ 上轨
+function FigBoll() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <path d="M4 16 C 40 12, 90 12, 146 14" fill="none" stroke={FIG.up} strokeWidth={1.5} />
+      <path d="M4 32 C 40 32, 90 32, 146 30" fill="none" stroke="var(--muted)" strokeWidth={1} strokeDasharray="4 3" />
+      <path d="M4 48 C 40 52, 90 52, 146 48" fill="none" stroke={FIG.down} strokeWidth={1.5} />
+      <path d="M4 36 C 30 34, 60 38, 84 34 S 118 20, 130 16 L 138 10" fill="none" stroke="var(--text)" strokeWidth={2} />
+      <circle cx={138} cy={10} r={2.5} fill={FIG.up} />
+      <text x={98} y={8} fontSize={7} fill={FIG.up}>破上轨</text>
+      <text x={4} y={60} fontSize={7} fill="var(--faint)">中轨 / 上轨(红) / 下轨(绿), 20 日均 ± 2σ</text>
+    </svg>
+  );
+}
+// 量比: 今日柱 vs 5 日均量虚线
+function FigVolRatio() {
+  const bars = [22, 18, 24, 20, 23];
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={54} y2={54} {...axis} />
+      <line x1={0} x2={126} y1={32} y2={32} {...refL} /><text x={128} y={35} fontSize={7} fill="var(--faint)">5 日均</text>
+      {bars.map((h, i) => (
+        <rect key={i} x={10 + i * 22} y={54 - h} width={12} height={h} rx={2} fill="var(--faint)" opacity={0.7} />
+      ))}
+      <rect x={10 + 4 * 22 + 14} y={54 - 48} width={12} height={48} rx={2} fill={FIG.up} />
+      <text x={10 + 4 * 22 + 10} y={10} fontSize={7} fill={FIG.up}>今日</text>
+    </svg>
+  );
+}
+// OBV: 涨日加量 / 跌日减量
+function FigOBV() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={52} y2={52} {...axis} />
+      <path d="M4 48 L24 38 L40 44 L60 30 L80 38 L100 22 L120 30 L146 14" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <path d="M4 48 L24 52 L40 44" fill="none" stroke={FIG.down} strokeWidth={1.5} strokeDasharray="3 2" />
+      <text x={104} y={58} fontSize={7} fill={FIG.up}>涨日 + 量</text>
+      <text x={62} y={58} fontSize={7} fill={FIG.down}>跌日 − 量</text>
+    </svg>
+  );
+}
+// 最大回撤: 净值峰值→谷底
+function FigDrawdown() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={54} y2={54} {...axis} />
+      <path d="M4 48 L34 14 L52 30 L74 10 L104 44 L146 22" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <circle cx={74} cy={10} r={2.5} fill="var(--text)" />
+      <circle cx={104} cy={44} r={2.5} fill={FIG.up} />
+      <line x1={86} y1={10} x2={86} y2={44} {...refL} />
+      <line x1={74} y1={27} x2={104} y2={27} {...refL} />
+      <text x={89} y={25} fontSize={7} fill={FIG.up}>峰→谷</text>
+      <text x={116} y={50} fontSize={7} fill="var(--faint)">最大回撤</text>
+    </svg>
+  );
+}
+// 止损: 现价跌破成本 −8% 虚线
+function FigStop() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={54} y2={54} {...axis} />
+      <line x1={0} x2={150} y1={20} y2={20} stroke="var(--text)" strokeWidth={1} strokeDasharray="5 3" />
+      <text x={4} y={16} fontSize={7} fill="var(--text)">成本价</text>
+      <line x1={0} x2={150} y1={40} y2={40} {...refL} />
+      <text x={4} y={37} fontSize={7} fill={FIG.up}>止损线 −8%</text>
+      <path d="M4 22 L30 26 L56 30 L82 36 L108 46 L146 50" fill="none" stroke={FIG.down} strokeWidth={2} />
+      <circle cx={108} cy={46} r={2.5} fill={FIG.up} />
+      <text x={112} y={56} fontSize={7} fill={FIG.up}>触发</text>
+    </svg>
+  );
+}
+// K 线蜡烛: 红涨 / 绿跌 + MA 线穿过
+function FigCandle() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      {[
+        [16, 20, 34, FIG.up], [44, 12, 30, FIG.up], [72, 18, 42, FIG.down], [100, 26, 44, FIG.down], [128, 10, 38, FIG.up],
+      ].map(([x, top, bot, col]) => (
+        <g key={Number(x)}>
+          <line x1={Number(x)} y1={Number(top) - 4} x2={Number(x)} y2={Number(bot) + 4} stroke={col} strokeWidth={1} />
+          <rect x={Number(x) - 5} y={Number(top)} width={10} height={Number(bot) - Number(top)} fill={col} opacity={0.85} />
+        </g>
+      ))}
+      <path d="M4 40 C 40 34, 70 26, 100 22 S 130 16, 146 14" fill="none" stroke={FIG.blue} strokeWidth={1.5} />
+      <path d="M4 44 C 40 40, 70 34, 100 30 S 130 26, 146 24" fill="none" stroke={FIG.warn} strokeWidth={1.5} />
+      <text x={4} y={58} fontSize={7} fill="var(--faint)">红涨绿跌 · MA5(蓝) / MA20(金) 叠加</text>
+    </svg>
+  );
+}
+// RSI 双口径: Wilder 平滑 / Cutler 敏感
+function FigRSI2() {
+  return (
+    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+      <line x1={0} x2={150} y1={14} y2={14} {...refL} /><text x={118} y={11} fontSize={7} fill={FIG.down}>70</text>
+      <line x1={0} x2={150} y1={46} y2={46} {...refL} /><text x={118} y={52} fontSize={7} fill={FIG.up}>30</text>
+      <path d="M4 30 C 30 24, 50 38, 74 32 S 116 24, 146 30" fill="none" stroke={FIG.blue} strokeWidth={2} />
+      <path d="M4 32 L24 22 L44 42 L64 26 L86 46 L108 24 L130 50 L146 40" fill="none" stroke={FIG.warn} strokeWidth={1.5} strokeDasharray="4 3" />
+      <text x={4} y={10} fontSize={7} fill={FIG.blue}>Wilder(平滑)</text>
+      <text x={4} y={58} fontSize={7} fill={FIG.warn}>Cutler(敏感, 与 ETL 同口径)</text>
+    </svg>
+  );
+}
+// 字段 → 示意图 映射(键须与 GLOSS 字段名完全一致)
+const FIGS: Record<string, () => ReturnType<typeof FigMACD>> = {
+  "共振度（命中数）": FigResonance,
+  "MACD金叉 / 死叉": FigMACD,
+  "KDJ金叉": FigKDJ,
+  "RSI超卖 / 超买": FigRSI,
+  "威廉超卖 / 超买": FigWilliams,
+  "突破布林上轨 / 跌破下轨": FigBoll,
+  "量比": FigVolRatio,
+  "OBV": FigOBV,
+  "最大回撤%": FigDrawdown,
+  "止损 / 止盈": FigStop,
+  "MA5 / MA20 / RSI / MACD": FigCandle,
+  "RSI · Wilder / Cutler": FigRSI2,
+};
+
 function GlossaryTab() {
+  // 关键词过滤: 同时匹配「字段名」和「定义」。
+  const [q, setQ] = useState("");
+  const kw = q.trim().toLowerCase();
+  const match = (r: GlossRow) =>
+    kw === "" || r[0].toLowerCase().includes(kw) || r[1].toLowerCase().includes(kw);
+  const sections = GLOSS_SECTIONS.map((s) => ({ ...s, rows: s.rows.filter(match) }))
+    .filter((s) => s.rows.length > 0);
+  const totalRows = GLOSS_SECTIONS.reduce((n, s) => n + s.rows.length, 0);
   return (
     <div className="glossary">
-      {GLOSS_SECTIONS.map((s) => (
+      <div className="card gloss-search">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={`搜字段 / 关键词, 如: 止损 / 量比 / RSI / 冷启动`}
+        />
+        <span className="gloss-search-hint">共 {totalRows} 个字段{kw !== "" ? ` · 命中 ${sections.reduce((n, s) => n + s.rows.length, 0)} 个` : ""}</span>
+      </div>
+      {sections.length === 0 && (
+        <div className="card" style={{ color: "var(--muted)", fontSize: 13 }}>没有匹配「{q}」的字段。</div>
+      )}
+      {sections.map((s) => (
         <div className="card" key={s.title}>
           <h3>{s.title}{s.sub ? <span> · {s.sub}</span> : null}</h3>
           <table>
             <tbody>
-              {s.rows.map(([f, d]) => (
-                <tr key={f}>
-                  <td className="gloss-field">{f}</td>
-                  <td>{d}</td>
-                </tr>
-              ))}
+              {s.rows.map(([f, d]) => {
+                const Fig = FIGS[f];
+                return (
+                  <tr key={f}>
+                    <td className="gloss-field">{f}{Fig ? <span className="gloss-hasfig"> 有图</span> : null}</td>
+                    <td>
+                      {d}
+                      {Fig ? <Fig /> : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
