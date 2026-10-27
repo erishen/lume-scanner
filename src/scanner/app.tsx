@@ -786,10 +786,16 @@ function CandleChart({ series }: { series: KlineRow[] }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
         <div className="chart-labels" style={{ margin: 0 }}>
           <b>K 线图</b>
-          <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
-            <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #d29922" }} /> MA5
-            <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #bc8cff" }} /> MA20
-            <i style={{ display: "inline-block", width: 14, borderTop: "2px dashed #58a6ff" }} /> 最新价
+          <span style={{ display: "inline-flex", gap: 16, alignItems: "center", marginLeft: 16 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #d29922" }} /> MA5
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #bc8cff" }} /> MA20
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <i style={{ display: "inline-block", width: 14, borderTop: "2px dashed #58a6ff" }} /> 最新价
+            </span>
           </span>
         </div>
         <span style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }} title="K 线图显示根数(列表仍受上方「天数」控制)">
