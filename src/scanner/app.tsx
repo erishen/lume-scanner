@@ -5,6 +5,7 @@ import {
   fetchRealtime, fetchIndexes, fetchSignalStats, fetchDailyPicks,
   fetchPaper, fetchFreshness,
   type Meta, type SignalPayload, type ScreenPayload, type StockPayload, type Filters, type IndicatorsPayload,
+  type KlineRow,
   type Realtime, type RealtimeIndexes, type SignalStatsPayload, type DailyPicksPayload,
   type PaperPayload, type PaperPosition, type Freshness,
 } from "./api";
@@ -725,6 +726,107 @@ function PaperRow({ p, onStock }: { p: PaperPosition; onStock: (c: string) => vo
   );
 }
 
+// ---- 蜡烛图(个股页标配: 红涨绿跌 K 线 + MA5/MA20 叠加 + 成交量副图; 零依赖 SVG)----
+function CandleChart({ series }: { series: KlineRow[] }) {
+  const [n, setN] = useState(60); // 显示根数: 30 / 60 / 全
+  const view = (n === 0 ? series : series.slice(-n)).filter((r) => r.high != null && r.low != null);
+  if (view.length === 0) return null;
+  const W = 720, mainH = 180, volH = 52, top = 10, gap = 22, labelH = 20;
+  const H = top + mainH + gap + volH + labelH;
+  const x0 = 48, x1 = W - 10, plotW = x1 - x0;
+  const slot = plotW / view.length;
+  const cw = Math.max(2, Math.min(14, slot * 0.55));
+  const px = (i: number) => x0 + slot * (i + 0.5);
+  // 价格域: 高低点 + 均线(非空), 上下各留 5% 边距
+  let lo = Infinity, hi = -Infinity;
+  for (const r of view) {
+    if (r.ma5 != null) { lo = Math.min(lo, r.ma5); hi = Math.max(hi, r.ma5); }
+    if (r.ma20 != null) { lo = Math.min(lo, r.ma20); hi = Math.max(hi, r.ma20); }
+    lo = Math.min(lo, r.low); hi = Math.max(hi, r.high);
+  }
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+  const pad = (hi - lo) * 0.05 || 1;
+  lo -= pad; hi += pad;
+  const span = hi - lo;
+  const y = (v: number) => top + mainH - ((v - lo) / span) * mainH;
+  const vtop = top + mainH + gap; // 成交量区顶
+  const vmax = Math.max(...view.map((r) => r.volume ?? 0), 1);
+  const maPts = (get: (r: KlineRow) => number | null | undefined) =>
+    view.map((r, i) => {
+      const v = get(r);
+      return v == null ? null : `${px(i).toFixed(1)},${y(v).toFixed(1)}`;
+    }).filter(Boolean).join(" ");
+  const xticks = Array.from(new Set([0, 1, 2, 3, 4, 5].map((j) => Math.round((j * (view.length - 1)) / 5))));
+  const last = view[view.length - 1];
+  const lastUp = (last.close ?? 0) >= (last.open ?? 0);
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+        <div className="chart-labels" style={{ margin: 0 }}>
+          <b>K 线图</b>
+          <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+            <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #d29922" }} /> MA5
+            <i style={{ display: "inline-block", width: 14, borderTop: "2px solid #bc8cff" }} /> MA20
+            <i style={{ display: "inline-block", width: 14, borderTop: "2px dashed #58a6ff" }} /> 最新价
+          </span>
+        </div>
+        <span style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }} title="K 线图显示根数(列表仍受上方「天数」控制)">
+          {[30, 60, 0].map((v) => (
+            <button key={v} className="ghost"
+              style={{ border: "none", background: n === v ? "var(--accent-soft)" : "transparent", color: n === v ? "var(--blue)" : "var(--muted)", padding: "2px 8px" }}
+              onClick={() => setN(v)}>{v === 0 ? "全" : `${v}根`}</button>
+          ))}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        {/* 4 条价格网格 + 左轴 */}
+        {[0, 1, 2, 3].map((g) => {
+          const v = lo + (span * g) / 3;
+          const yy = y(v);
+          return (
+            <g key={g}>
+              <line x1={x0} x2={x1} y1={yy} y2={yy} stroke="#21262d" strokeDasharray="3 4" />
+              <text x={x0 - 4} y={yy + 3.5} fill="#6e7681" fontSize={10} textAnchor="end">{v.toFixed(2)}</text>
+            </g>
+          );
+        })}
+        {/* 最新价虚线 */}
+        <line x1={x0} x2={x1} y1={y(last.close ?? 0)} y2={y(last.close ?? 0)} stroke={lastUp ? "#f85149" : "#3fb950"} strokeDasharray="5 4" strokeOpacity={0.65} />
+        <text x={x1 - 2} y={y(last.close ?? 0) - 4} fill={lastUp ? "#f85149" : "#3fb950"} fontSize={10} textAnchor="end">{(last.close ?? 0).toFixed(2)}</text>
+        {/* 蜡烛: 影线 + 实体(红涨绿跌) */}
+        {view.map((r, i) => {
+          const up = (r.close ?? 0) >= (r.open ?? 0);
+          const color = up ? "#f85149" : "#3fb950";
+          const bodyTop = y(Math.max(r.open ?? 0, r.close ?? 0));
+          const bodyH = Math.max(1, Math.abs(y(r.open ?? 0) - y(r.close ?? 0)));
+          return (
+            <g key={r.date}>
+              <line x1={px(i)} x2={px(i)} y1={y(r.high ?? 0)} y2={y(r.low ?? 0)} stroke={color} strokeWidth={1} />
+              <rect x={px(i) - cw / 2} y={bodyTop} width={cw} height={bodyH} fill={color} />
+            </g>
+          );
+        })}
+        {/* MA 叠加 */}
+        <polyline points={maPts((r) => r.ma5)} fill="none" stroke="#d29922" strokeWidth={1.4} />
+        <polyline points={maPts((r) => r.ma20)} fill="none" stroke="#bc8cff" strokeWidth={1.4} />
+        {/* 成交量副图 */}
+        <line x1={x0} x2={x1} y1={vtop + volH} y2={vtop + volH} stroke="#21262d" />
+        <text x={x0 + 2} y={vtop + 10} fill="#6e7681" fontSize={9}>量(万手) · 最大 {((vmax / 10000)).toFixed(0)}</text>
+        {view.map((r, i) => {
+          const up = (r.close ?? 0) >= (r.open ?? 0);
+          const h = Math.max(1, ((r.volume ?? 0) / vmax) * (volH - 14));
+          return <rect key={r.date} x={px(i) - cw / 2} y={vtop + volH - h} width={cw} height={h}
+            fill={up ? "rgba(248,81,73,.45)" : "rgba(63,185,80,.45)"} />;
+        })}
+        {/* 日期刻度(6 个, 去重) */}
+        {xticks.map((i) => (
+          <text key={i} x={px(i)} y={H - 4} fill="#6e7681" fontSize={9} textAnchor="middle">{view[i]?.date?.slice(5)}</text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // ---- Tab 3: 个股 K 线 + 指标 ----
 // seed: 共享的「当前个股」(与指标页跟随); onQuery: 本页手动查询后上报, 供指标页跟随
 function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) => void }) {
@@ -773,6 +875,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
             <div className="kv">近 {data.days} 个交易日(倒序, 最新在上) · 数据截至 {data.series[data.series.length - 1]?.date ?? "—"}</div>
           </div>
           <RealtimeCard code={data.code} />
+          <CandleChart series={data.series} />
           <div className="card">
             <div className="series" style={{ maxHeight: 480, overflow: "auto", padding: 0 }}>
               <table>
