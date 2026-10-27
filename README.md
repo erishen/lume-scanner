@@ -2,7 +2,7 @@
 
 [中文文档](README.zh.md)
 
-Serves the ETL output of [stock-analyzer](../../../../invest-kit/apps/stock-analyzer) — full-market
+Serves the ETL output of [stock-analyzer](https://github.com/erishen/stock-analyzer) — full-market
 signal / indicator / asset-snapshot SQLite databases (~8.5M rows) — with a **single Lume binary** in
 read-only mode:
 

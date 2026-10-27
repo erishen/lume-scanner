@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-把 [stock-analyzer](../../../../invest-kit/apps/stock-analyzer) 的 ETL 产出(信号/指标/资产快照
+把 [stock-analyzer](https://github.com/erishen/stock-analyzer) 的 ETL 产出(信号/指标/资产快照
 SQLite 库, 8.5M 行)用一个 **Lume 单二进制** 只读服务起来:全市场信号扫描(带 RSI 双口径对照)、
 白名单规则筛选、个股 K 线 + **指标页 Lume 内建现算**(KDJ/MACD/RSI/Wilder/Cutler/布林/
 Williams/ATR/OBV/绩效风险, 不依赖 Python ETL 指标列)、**实时行情**(个股价卡 + 四大指数条)、
