@@ -3,7 +3,7 @@
 [English](README.md)
 
 把 [stock-analyzer](https://github.com/erishen/stock-analyzer) 的 ETL 产出(信号/指标/资产快照
-SQLite 库, 8.5M 行)用一个 **Lume 单二进制** 只读服务起来:全市场信号扫描(带 RSI 双口径对照)、
+SQLite 库)用一个 **Lume 单二进制** 只读服务起来:全市场信号扫描(带 RSI 双口径对照)、
 白名单规则筛选、个股 K 线 + **指标页 Lume 内建现算**(KDJ/MACD/RSI/Wilder/Cutler/布林/
 Williams/ATR/OBV/绩效风险, 不依赖 Python ETL 指标列)、**实时行情**(个股价卡 + 四大指数条)、
 内置 LLM agent 聊天(可直查库 + 查实时价)。信号「计算」留在 Python ETL 端(每日 18:30 launchd
@@ -14,7 +14,7 @@ Williams/ATR/OBV/绩效风险, 不依赖 Python ETL 指标列)、**实时行情*
 | 方式 | 命令 | 数据源 | 场景 |
 |---|---|---|---|
 | 样例库 | `make dev` | `.data/`(40 只 × 60 交易日抽取) | 本地演示、改前端热更 |
-| 全量库 | `make real` | stock-analyzer `data/` 双库(8.5M 行) | 日常看全市场, 宿主直跑 |
+| 全量库 | `make real` | stock-analyzer `data/` 双库 | 日常看全市场, 宿主直跑 |
 | Docker | `make docker && make docker-up` | bind mount 宿主 `data/`(只读) | 长驻 / 对外 / 隔离跑 |
 
 ```bash
@@ -36,7 +36,7 @@ make docker-down
 
 ```bash
 cd work/lume/lume-scanner
-make docker && make docker-up        # 全量 8.5M 行库, 容器跑, 访问 http://127.0.0.1:18094
+make docker && make docker-up        # 全量库, 容器跑, 访问 http://127.0.0.1:18094
 # 或 make dev                        # 40 只样例库, 本机热更, 访问 http://127.0.0.1:8094
 ```
 
@@ -67,10 +67,10 @@ make docker && make docker-up        # 全量 8.5M 行库, 容器跑, 访问 htt
 
 ```
 stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标列→信号 flag→钉钉推送)
-  └─► data/stock_analysis.db(8.5M 行) + asset_snapshot.db
-        ├─ make real / docker: 直接只读(8.5M 行走索引毫秒级)
+  └─► data/stock_analysis.db + asset_snapshot.db
+        ├─ make real / docker: 直接只读(全量库走索引毫秒级)
         ├─ make dev: scripts/make_sample_data.py 抽 40 只 × 60 交易日 → .data/
-        └─ 实时行情: 不走库, Lume http_get 直连腾讯 qt.gtimg.cn(单票 15s / 指数 30s TTL 缓存)
+        └─ 实时行情: 不走库, Lume http_get 直连公开行情文本源(单票 15s / 指数 30s TTL 缓存)
 ```
 
 数据停更 >3 天由 stock-analyzer 的 `check-stale` 兜底推钉钉告警。
@@ -84,7 +84,7 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 | `POST /api/screen` | 规则筛选:白名单字段 `?` 占位绑定不拼 SQL;无过滤时回量比 Top N |
 | `GET /api/stock/:code?days=` | 个股近 N 日 K 线 + ma5/ma20/rsi/macd 序列(代码自动归一 6 位→sh/sz/bj) |
 | `GET /api/indicators/:code?days=&period=` | **Lume 内建现算**(读原始 OHLCV, 不读 ETL 列):KDJ/Williams/ATR/OBV/MA/MACD/RSI(Wilder+Cutler)/布林 + 绩效风险面板(夏普/Sortino/CVaR/VaR…)+ Lume 侧信号判定 |
-| `GET /api/realtime/indexes` | 四大指数实时点位(腾讯文本源, 30s 缓存) |
+| `GET /api/realtime/indexes` | 四大指数实时点位(公开行情文本源, 30s 缓存) |
 | `GET /api/realtime/:code` | 单票实时价/涨跌/开高低昨收/量额/时间戳(15s 缓存; 停牌→`suspended`, 上游挂→`ok:false+reason` 前端降级) |
 | `GET /api/meta` | 最新交易日/标的数/行数 |
 | `POST /react/api/chat` | agent SSE 聊天(工具白名单直查库 + 查实时价; 未配 LLM 走离线 demo 引擎) |
@@ -101,7 +101,7 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 ## agent 工具(`src/repo.lume` 顶层注册, 全部只读, 白名单由 env 注入)
 
 - `scan_signals` / `screen_stocks` / `stock_kline` / `stock_indicators` — 库内 T-1 数据
-- `realtime_quote` / `market_indexes` — 盘中实时价(腾讯源, 服务端缓存)
+- `realtime_quote` / `market_indexes` — 盘中实时价(公开行情源, 服务端缓存)
 - `sql_query` / `sql_tables` / `sql_schema` / `read_file` / `get_time` — introspect + 基础
 
 `make real` 与 docker compose 都注入 `HARNESS_TOOLS_ALLOW`(Makefile `SCANNER_TOOLS`, 不含 `sql_write`)。
@@ -131,7 +131,7 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 ## 免责声明
 
 - 本项目为量化研究 / 模拟交易研究工具, 所有信号、回测与模拟结果仅供参考, **不构成投资建议**。
-- 市场数据来自公开行情源 (akshare / 腾讯 / 东财), 仅供研究用途, 版权归原作者所有。
+- 市场数据来自公开行情源, 仅供研究用途, 版权归原作者所有。
 - 历史表现不代表未来结果。
 
 ## License

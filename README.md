@@ -3,7 +3,7 @@
 [中文文档](README.zh.md)
 
 Serves the ETL output of [stock-analyzer](https://github.com/erishen/stock-analyzer) — full-market
-signal / indicator / asset-snapshot SQLite databases (~8.5M rows) — with a **single Lume binary** in
+signal / indicator / asset-snapshot SQLite databases — with a **single Lume binary** in
 read-only mode:
 
 - Full-market signal scan with **dual-caliber RSI cross-checks**
@@ -22,7 +22,7 @@ This service performs **zero writes**.
 | Mode | Command | Data source | Use case |
 |---|---|---|---|
 | Sample DB | `make dev` | `.data/` (40 stocks × 60 sessions, extracted) | Local demo, hot-reloading the frontend |
-| Full DB | `make real` | stock-analyzer `data/` pair (~8.5M rows) | Daily full-market use, direct on the host |
+| Full DB | `make real` | stock-analyzer `data/` pair | Daily full-market use, direct on the host |
 | Docker | `make docker && make docker-up` | bind-mounted host `data/` (read-only) | Long-running / shared / isolated |
 
 ```bash
@@ -47,7 +47,7 @@ recommended):
 
 ```bash
 cd work/lume/lume-scanner
-make docker && make docker-up        # full 8.5M-row DBs in a container, http://127.0.0.1:18094
+make docker && make docker-up        # full DBs in a container, http://127.0.0.1:18094
 # or: make dev                       # 40-stock sample DB, local hot reload, http://127.0.0.1:8094
 ```
 
@@ -83,11 +83,11 @@ the image is older than the frontend — rebuild the app image.
 ```
 stock-analyzer ETL (host launchd, daily 18:30, incremental K-line fetch -> 51 indicator
 columns -> signal flags -> DingTalk push)
-  └─► data/stock_analysis.db (~8.5M rows) + asset_snapshot.db
-        ├─ make real / docker: read directly (8.5M rows resolve in ms via indexes)
+  └─► data/stock_analysis.db + asset_snapshot.db
+        ├─ make real / docker: read directly (full DB resolves in ms via indexes)
         ├─ make dev: scripts/make_sample_data.py extracts 40 stocks × 60 sessions -> .data/
-        └─ live quotes: NOT from the DB — Lume http_get straight to the public Tencent quote
-           endpoint (15s TTL per stock, 30s for indexes)
+        └─ live quotes: NOT from the DB — Lume http_get straight to a public quote endpoint
+           (15s TTL per stock, 30s for indexes)
 ```
 
 If data goes stale for >3 days, stock-analyzer's `check-stale` job pushes a DingTalk alert.
@@ -118,7 +118,7 @@ If data goes stale for >3 days, stock-analyzer's `check-stale` job pushes a Ding
 ## Agent tools (registered at the top level of `src/repo.lume`, all read-only, whitelist via env)
 
 - `scan_signals` / `screen_stocks` / `stock_kline` / `stock_indicators` — T-1 data from the DBs
-- `realtime_quote` / `market_indexes` — intraday live prices (Tencent source, server-side cached)
+- `realtime_quote` / `market_indexes` — intraday live prices (public quote source, server-side cached)
 - `sql_query` / `sql_tables` / `sql_schema` / `read_file` / `get_time` — introspection + basics
 
 Both `make real` and docker compose inject `HARNESS_TOOLS_ALLOW` (the `SCANNER_TOOLS` list in the
@@ -159,8 +159,8 @@ builtins that the latest release tag may not yet ship. If you pin a release inst
 
 - This project is a quantitative-research / paper-trading research tool. All signals, backtests
   and simulated results are for reference only and **do not constitute investment advice**.
-- Market data comes from public feeds (akshare / Tencent / EastMoney), for research purposes only;
-  data belongs to their respective owners.
+- Market data is sourced from public feeds; for research purposes only. Data belongs to its
+  respective owners.
 - Past performance does not guarantee future results.
 
 ## License
