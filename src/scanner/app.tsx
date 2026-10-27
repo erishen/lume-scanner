@@ -642,7 +642,7 @@ function PaperCorr({ data }: { data: PaperPayload }) {
         <table style={{ tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ minWidth: 90 }}>代码</th>
+              <th style={{ minWidth: 104, whiteSpace: "nowrap" }}>代码 / 名称</th>
               {pos.map((p) => (
                 <th key={p.code} style={{ textAlign: "center", fontSize: 11 }}>{p.code.slice(2)}</th>
               ))}
@@ -651,7 +651,10 @@ function PaperCorr({ data }: { data: PaperPayload }) {
           <tbody>
             {pos.map((p, i) => (
               <tr key={p.code}>
-                <td style={{ fontFamily: "ui-monospace,monospace", fontSize: 12 }}>{p.code}{p.name ? <span style={{ color: "var(--muted)" }}> {p.name}</span> : null}</td>
+                <td style={{ lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <span style={{ fontFamily: "ui-monospace,monospace", fontSize: 12 }}>{p.code}</span>
+                  {p.name ? <div style={{ color: "var(--muted)", fontSize: 11 }}>{p.name}</div> : null}
+                </td>
                 {pos.map((q, j) => {
                   const v = m[i]?.[j];
                   return (
