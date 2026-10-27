@@ -729,6 +729,10 @@ function PaperRow({ p, onStock }: { p: PaperPosition; onStock: (c: string) => vo
 // ---- 蜡烛图(个股页标配: 红涨绿跌 K 线 + MA5/MA20 叠加 + 成交量副图; 零依赖 SVG)----
 function CandleChart({ series }: { series: KlineRow[] }) {
   const [n, setN] = useState(60); // 显示根数: 30 / 60 / 全
+  const [hover, setHover] = useState<number | null>(null);   // 十字光标: 悬停的蜡烛序号
+  const [hoverY, setHoverY] = useState<number | null>(null); // 十字光标: 横线 Y(仅价格区)
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const pick = (v: number) => { setN(v); setHover(null); setHoverY(null); };
   const view = (n === 0 ? series : series.slice(-n)).filter((r) => r.high != null && r.low != null);
   if (view.length === 0) return null;
   const W = 720, mainH = 180, volH = 52, top = 10, gap = 22, labelH = 20;
@@ -759,6 +763,24 @@ function CandleChart({ series }: { series: KlineRow[] }) {
   const xticks = Array.from(new Set([0, 1, 2, 3, 4, 5].map((j) => Math.round((j * (view.length - 1)) / 5))));
   const last = view[view.length - 1];
   const lastUp = (last.close ?? 0) >= (last.open ?? 0);
+  // 十字光标: 鼠标 X → 最近蜡烛序号; 只有指针在价格区(上)内才显示横线
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const box = svg.getBoundingClientRect();
+    const vx = ((e.clientX - box.left) / box.width) * W;
+    const vy = ((e.clientY - box.top) / box.height) * H;
+    const i = Math.max(0, Math.min(view.length - 1, Math.round((vx - x0) / slot - 0.5)));
+    setHover(i);
+    setHoverY(vy >= top && vy <= top + mainH ? vy : null);
+  };
+  const onLeave = () => { setHover(null); setHoverY(null); };
+  // 读数条: 悬停显示该日 OHLC, 不悬停显示最新日; 量(万手)
+  const rd = hover != null ? view[hover] : last;
+  const rdUp = (rd.close ?? 0) >= (rd.open ?? 0);
+  const rdCls = hover != null ? (rdUp ? "up" : "down") : "";
+  // 横线对应的价格(仅悬停横线时): 屏幕 Y → 价格
+  const hoverPrice = hoverY != null ? lo + (top + mainH - hoverY) / mainH * span : null;
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -774,11 +796,23 @@ function CandleChart({ series }: { series: KlineRow[] }) {
           {[30, 60, 0].map((v) => (
             <button key={v} className="ghost"
               style={{ border: "none", background: n === v ? "var(--accent-soft)" : "transparent", color: n === v ? "var(--blue)" : "var(--muted)", padding: "2px 8px" }}
-              onClick={() => setN(v)}>{v === 0 ? "全" : `${v}根`}</button>
+              onClick={() => pick(v)}>{v === 0 ? "全" : `${v}根`}</button>
           ))}
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      <div className="candle-readout" title="移动鼠标看当日 OHLC">
+        <span className="dim">{rd.date}</span>
+        <span>开 <b className={rdCls}>{(rd.open ?? 0).toFixed(2)}</b></span>
+        <span>高 <b className={rdUp ? "up" : ""}>{(rd.high ?? 0).toFixed(2)}</b></span>
+        <span>低 <b className={rdUp ? "" : "down"}>{(rd.low ?? 0).toFixed(2)}</b></span>
+        <span>收 <b className={rdCls}>{(rd.close ?? 0).toFixed(2)}</b></span>
+        <span className={cls(rd.change_percent ?? 0)}>
+          {(rd.change_percent ?? 0) >= 0 ? "+" : ""}{(rd.change_percent ?? 0).toFixed(2)}%
+        </span>
+        <span className="dim">量 {((rd.volume ?? 0) / 10000).toLocaleString("zh-CN", { maximumFractionDigits: 0 })}万手</span>
+      </div>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        onMouseMove={onMove} onMouseLeave={onLeave}>
         {/* 4 条价格网格 + 左轴 */}
         {[0, 1, 2, 3].map((g) => {
           const v = lo + (span * g) / 3;
@@ -822,6 +856,23 @@ function CandleChart({ series }: { series: KlineRow[] }) {
         {xticks.map((i) => (
           <text key={i} x={px(i)} y={H - 4} fill="#6e7681" fontSize={9} textAnchor="middle">{view[i]?.date?.slice(5)}</text>
         ))}
+        {/* 十字光标: 竖线(悬停蜡烛)+ 横线(仅价格区)+ 左轴价格气泡 */}
+        {hover != null && (
+          <g>
+            <line x1={px(hover)} x2={px(hover)} y1={top} y2={vtop + volH} stroke="#8b949e" strokeOpacity={0.55} strokeDasharray="2 3" />
+            {hoverY != null && (
+              <>
+                <line x1={x0} x2={x1} y1={hoverY} y2={hoverY} stroke="#8b949e" strokeOpacity={0.55} strokeDasharray="2 3" />
+                <g>
+                  <rect x={x0 - 46} y={hoverY - 8} width={44} height={16} rx={3} fill="#21262d" stroke="#30363d" />
+                  <text x={x0 - 24} y={hoverY + 3.5} fill="#e6edf3" fontSize={10} textAnchor="middle">
+                    {hoverPrice != null ? hoverPrice.toFixed(2) : ""}
+                  </text>
+                </g>
+              </>
+            )}
+          </g>
+        )}
       </svg>
     </div>
   );
