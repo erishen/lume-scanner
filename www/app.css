@@ -326,12 +326,25 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 
 /* ---- 字段说明 tab ---- */
 .glossary { display: grid; gap: 12px; }
+/* grid item(card)默认 min-width:auto 会因表格/SVG 内容撑出右边界 → 强制 0 让其能收缩 */
+.glossary > .card { min-width: 0; }
 .glossary h3 span { font-weight: 400; color: var(--faint); font-size: 12px; }
-.glossary table { width: 100%; border-collapse: collapse; }
-.glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; }
+/* 定宽表: 列宽按首行百分比分配, 内容在格内换行, 永不撑出(左右 16px 对称留白) */
+.glossary table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
 .glossary tr:last-child td { border-bottom: 0; }
-.glossary .gloss-field { width: 34%; min-width: 180px; color: var(--text); font-weight: 600; }
-.glossary td:last-child svg { max-width: 100%; }
+.glossary .gloss-field { width: 34%; color: var(--text); font-weight: 600; }
+/* SVG 示意图: 充满定义列且随列收缩(窄屏自动变小, 永不出界); 圆角底 */
+.gloss-fig {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  margin: 8px 0 2px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
 .gloss-hasfig { font-size: 9.5px; color: var(--blue); border: 1px solid var(--border); border-radius: 5px; padding: 0 4px; margin-left: 6px; vertical-align: middle; font-weight: 400; }
 .gloss-search { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
 .gloss-search input {
