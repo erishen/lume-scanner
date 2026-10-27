@@ -770,7 +770,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
             <div className="kv" style={{ fontSize: 15 }}>
               <span className="name">{data.name ? data.name + " " : ""}{data.code}</span>
             </div>
-            <div className="kv">近 {data.days} 个交易日(升序) · 数据截至 {data.series[data.series.length - 1]?.date ?? "—"}</div>
+            <div className="kv">近 {data.days} 个交易日(倒序, 最新在上) · 数据截至 {data.series[data.series.length - 1]?.date ?? "—"}</div>
           </div>
           <RealtimeCard code={data.code} />
           <div className="card">
@@ -780,7 +780,7 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
                   <tr><th>日期</th><th>开</th><th>收</th><th>低/高</th><th>量(万)</th><th>涨跌%</th><th>MA5</th><th>MA20</th><th>RSI</th><th>MACD</th></tr>
                 </thead>
                 <tbody>
-                  {(showAll ? data.series : data.series.slice(-30)).map((r) => (
+                  {(showAll ? data.series : data.series.slice(-30)).slice().reverse().map((r) => (
                     <tr key={r.date}>
                       <td>{r.date}</td>
                       <td><Num v={r.open} /></td>
