@@ -1320,13 +1320,13 @@ function FigVolRatio() {
   return (
     <svg viewBox="0 0 150 62" className="gloss-fig">
       <line x1={0} x2={150} y1={54} y2={54} {...axis} />
-      <line x1={0} x2={104} y1={32} y2={32} {...refL} />
+      <line x1={0} x2={108} y1={32} y2={32} {...refL} />
       <text x={24} y={28} fontSize={7} fill="var(--faint)">5 日均</text>
       {bars.map((h, i) => (
         <rect key={i} x={10 + i * 22} y={54 - h} width={12} height={h} rx={2} fill="var(--faint)" opacity={0.7} />
       ))}
-      <rect x={110} y={14} width={12} height={40} rx={2} fill={FIG.up} />
-      <text x={116} y={10} textAnchor="middle" fontSize={7} fill={FIG.up}>今日</text>
+      <rect x={120} y={14} width={12} height={40} rx={2} fill={FIG.up} />
+      <text x={126} y={10} textAnchor="middle" fontSize={7} fill={FIG.up}>今日</text>
     </svg>
   );
 }
