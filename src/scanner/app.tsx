@@ -707,7 +707,7 @@ function PaperTab({ onStock }: Openers) {
         {pos.length === 0 ? <div className="kv">无持仓</div> : (
           <table>
             <thead>
-              <tr><th>代码</th><th>名称</th><th>买入日</th><th>成本</th><th>现价</th><th>浮动盈亏</th><th>盈亏%</th><th>止损/止盈</th><th>操作</th></tr>
+              <tr><th>代码</th><th>名称</th><th>买入日</th><th>成本</th><th>现价</th><th>浮动盈亏</th><th>盈亏%</th><th>止损/止盈</th><th title="近 60 日日收益的凯利公式 f*=均值/方差, 该票理论最优选仓位">凯利仓位</th><th>操作</th></tr>
             </thead>
             <tbody>
               {pos.map((p) => (
@@ -767,6 +767,10 @@ function PaperRow({ p, onStock }: { p: PaperPosition; onStock: (c: string) => vo
       <td className={pnlCls}>{p.upnl == null ? "—" : (p.upnl >= 0 ? "+" : "") + p.upnl.toFixed(0)}</td>
       <td className={pnlCls}>{p.upnl_pct == null ? "—" : (p.upnl_pct >= 0 ? "+" : "") + p.upnl_pct.toFixed(1) + "%"}</td>
       <td>{stopChip ?? <span style={{ color: "var(--faint)" }}>(±{(p.stop_loss ?? 0) * 100 || 0}/{(p.take_profit ?? 0) * 100 || 0}%)</span>}</td>
+      <td title="凯利公式 f* = 近 60 日日收益均值 ÷ 方差, 该票理论最优选仓位; 0=无正期望">
+        {p.kelly == null ? <span style={{ color: "var(--faint)" }}>—</span>
+          : <b style={{ color: p.kelly >= 0.1 ? "var(--up)" : p.kelly > 0 ? "var(--blue)" : "var(--faint)" }}>{(p.kelly * 100).toFixed(1)}%</b>}
+      </td>
       <td style={{ whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
         <button className="ghost" onClick={() => onStock(p.code)}>个股</button>
       </td>
@@ -1237,6 +1241,7 @@ const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
       ["挂单", "自动交易（paper-auto）已经决策、但要等下一次 paper-auto 运行才成交的买卖指令。表里列出 代码 / 名称 / 信号日 / 原因（为什么触发）。"],
       ["已平仓 笔", "历史已卖出的交易笔数。"],
       ["持仓相关性矩阵", "两两持仓最近 60 日日收益的 Pearson 相关（−1~1，对角线恒 1）。红=同向、绿=反向、越深越接近 ±1。多对 >0.6 说明组合实际押的是同一类票、风险集中；接近 0 / 负值才是真分散。"],
+      ["凯利仓位%", "凯利公式 f* = 期望收益 ÷ 风险（这里用近 60 日日收益的「均值 ÷ 方差」）。含义：按这笔历史胜率/赔率，理论上最优选的仓位占比。0=近 60 日没有正期望（不追），越大越该多配。这是数学最优点、实盘一般会打 1/2~1/4 折扣（凯利偏激进），只作参考不作指令。"],
     ],
   },
   {

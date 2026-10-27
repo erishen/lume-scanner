@@ -296,6 +296,8 @@ export interface PaperPosition {
   upnl_pct?: number | null;
   stop_hit?: boolean | null;
   target_hit?: boolean | null;
+  /** #57 Kelly 仓位建议 f* = 近 60 日日收益均值/方差(凯利公式); 负期望→0, 不可算→null */
+  kelly?: number | null;
 }
 
 export interface PaperPayload {

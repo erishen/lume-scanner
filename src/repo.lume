@@ -892,6 +892,18 @@ func paper_corr_matrix(codes, n) {
   }
   return r;
 }
+// Kelly 仓位建议: 对该持仓最近 60 日日收益算 f* = 均值/方差(凯利公式).
+// 只对「有正期望」的持仓才有意义; 序列不可算/方差<=0 → null.
+func paper_kelly(code, n) {
+  let rets = paper_ret_series(code, n);
+  if (rets == null) { return null; }
+  let kr = try(() => kelly_fraction(rets));
+  let v = get(kr, "ok", null);
+  if (v == null or v != v) { return null; }
+  // 负期望(均值<0)给不出正仓位, 视为 0
+  if (v < 0.0) { return 0.0; }
+  return v;
+}
 // 60 日日收益序列(持仓相关性用). close 不足 2 根返回 null.
 func paper_ret_series(code, n) {
   let db = db_scan();
@@ -966,6 +978,7 @@ export func paper_payload() {
       upnl_pct: paper_upnl_pct(p, price),
       stop_hit: paper_stop_hit(p, price),
       target_hit: paper_target_hit(p, price),
+      kelly: paper_kelly(code, 60),
     };
     push(positions, row);
     if (price != null) { mtm = mtm + price * float(get(p, "shares", 0)); }
@@ -1092,7 +1105,7 @@ tool "daily_picks", "查今日精选: 当日带信号票按「信号数×量比�
   return picks_payload();
 };
 
-tool "paper_portfolio", "查模拟仓: 当前持仓(成本/现价/浮动盈亏/是否触发止损止盈)+ 已平仓数 + 挂单, 复用它实时行情通道。返回 total_pnl/total_pnl_pct/cash/equity。", {}, (arg) => {
+tool "paper_portfolio", "查模拟仓: 当前持仓(成本/现价/浮动盈亏/是否触发止损止盈/凯利仓位建议)+ 已平仓数 + 挂单 + 持仓两两相关性矩阵(60日日收益), 复用它实时行情通道。返回 total_pnl/total_pnl_pct/cash/equity。", {}, (arg) => {
   return paper_payload();
 };
 
