@@ -624,6 +624,52 @@ export function FreshnessCard() {
 }
 
 // ---- 模拟仓 (读 stock-analyzer paper_portfolio.json + 实时行情, 现算浮动盈亏/止损/止盈) ----
+function PaperCorr({ data }: { data: PaperPayload }) {
+  const pos = data.positions ?? [];
+  const m = data.corr_matrix ?? [];
+  if (pos.length < 2 || m.length < 2) return null;
+  // 热力: 正相关→红, 负相关→绿(与 A 股红涨绿跌一致), 0 附近→透明
+  const cellBg = (v: number | null | undefined): React.CSSProperties => {
+    if (v == null || Number.isNaN(v)) return {};
+    const t = Math.max(-1, Math.min(1, v));
+    const a = Math.abs(t) * 0.55;
+    return { background: t >= 0 ? `rgba(248,81,73,${a.toFixed(2)})` : `rgba(63,185,80,${a.toFixed(2)})` };
+  };
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h3>持仓相关性矩阵 <span>· 最近 {data.corr_window ?? 60} 日日收益 Pearson(越大越同向, 越接近 0 越分散)</span></h3>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ tableLayout: "fixed" }}>
+          <thead>
+            <tr>
+              <th style={{ minWidth: 90 }}>代码</th>
+              {pos.map((p) => (
+                <th key={p.code} style={{ textAlign: "center", fontSize: 11 }}>{p.code.slice(2)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pos.map((p, i) => (
+              <tr key={p.code}>
+                <td style={{ fontFamily: "ui-monospace,monospace", fontSize: 12 }}>{p.code}{p.name ? <span style={{ color: "var(--muted)" }}> {p.name}</span> : null}</td>
+                {pos.map((q, j) => {
+                  const v = m[i]?.[j];
+                  return (
+                    <td key={q.code} style={{ ...cellBg(v), textAlign: "center", fontSize: 11.5, fontWeight: i === j ? 400 : 600, color: i === j ? "var(--faint)" : undefined, border: "1px solid var(--border-soft)" }}>
+                      {v == null ? "—" : v.toFixed(2)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="note">|相关| 越大越接近「押同一类票」: 多对 &gt;0.6 说明组合实际风险集中; 接近 0 / 负值说明真分散。灰字对角线恒 = 1。</div>
+    </div>
+  );
+}
+
 function PaperTab({ onStock }: Openers) {
   const [pk, setPk] = useState<PaperPayload | null>(null);
   const [err, setErr] = useState("");
@@ -694,6 +740,8 @@ function PaperTab({ onStock }: Openers) {
           </div>
         )}
       </div>
+
+      <PaperCorr data={pk} />
     </>
   );
 }
@@ -781,6 +829,20 @@ function CandleChart({ series }: { series: KlineRow[] }) {
   const rdCls = hover != null ? (rdUp ? "up" : "down") : "";
   // 横线对应的价格(仅悬停横线时): 屏幕 Y → 价格
   const hoverPrice = hoverY != null ? lo + (top + mainH - hoverY) / mainH * span : null;
+  // #57 回归趋势线: 对当前显示窗口的收盘价做 OLS(随 30/60/全 切换重算), 画 slope·x+b
+  let reg = null as null | { slope: number; b: number };
+  {
+    const pts = view.map((r, i) => ({ i, v: r.close ?? 0 })).filter((p) => isFinite(p.v));
+    if (pts.length >= 2) {
+      const mx = pts.reduce((s, p) => s + p.i, 0) / pts.length;
+      const my = pts.reduce((s, p) => s + p.v, 0) / pts.length;
+      let sxx = 0, sxy = 0;
+      for (const p of pts) { sxx += (p.i - mx) * (p.i - mx); sxy += (p.i - mx) * (p.v - my); }
+      if (sxx > 0) { const slope = sxy / sxx; reg = { slope, b: my - slope * mx }; }
+    }
+  }
+  const regPts = reg ? `${px(0).toFixed(1)},${y(reg.b).toFixed(1)} ${px(view.length - 1).toFixed(1)},${y(reg.b + reg.slope * (view.length - 1)).toFixed(1)}` : null;
+  const regUp = reg != null && reg.slope >= 0;
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -796,6 +858,11 @@ function CandleChart({ series }: { series: KlineRow[] }) {
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <i style={{ display: "inline-block", width: 14, borderTop: "2px dashed #58a6ff" }} /> 最新价
             </span>
+            {reg ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <i style={{ display: "inline-block", width: 14, borderTop: `2px dashed ${regUp ? "#f85149" : "#3fb950"}` }} /> 趋势
+              </span>
+            ) : null}
           </span>
         </div>
         <span style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }} title="K 线图显示根数(列表仍受上方「天数」控制)">
@@ -849,6 +916,9 @@ function CandleChart({ series }: { series: KlineRow[] }) {
         {/* MA 叠加 */}
         <polyline points={maPts((r) => r.ma5)} fill="none" stroke="#d29922" strokeWidth={1.4} />
         <polyline points={maPts((r) => r.ma20)} fill="none" stroke="#bc8cff" strokeWidth={1.4} />
+        {regPts ? (
+          <polyline points={regPts} fill="none" stroke={regUp ? "#f85149" : "#3fb950"} strokeWidth={1.6} strokeDasharray="7 4" />
+        ) : null}
         {/* 成交量副图 */}
         <line x1={x0} x2={x1} y1={vtop + volH} y2={vtop + volH} stroke="#21262d" />
         <text x={x0 + 2} y={vtop + 10} fill="#6e7681" fontSize={9}>量(万手) · 最大 {((vmax / 10000)).toFixed(0)}</text>
@@ -1042,6 +1112,8 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
                 <Perf label="最大回撤%" v={data.performance.max_drawdown_pct} plain />
                 <Perf label="VaR95(日)%" v={data.performance.var_95} plain />
                 <Perf label="CVaR95(日)%" v={data.performance.cvar_95} plain />
+                <Perf label="偏度" v={data.performance.skew} />
+                <Perf label="超额峰度" v={data.performance.kurtosis} />
               </div>
             </div>
           )}
@@ -1149,6 +1221,7 @@ const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
       ["MA5 / MA20 / RSI / MACD", "这些列都是 ETL 预先算好存库的（RSI=Cutler 口径，MACD=DIF 12/26/9）。"],
       ["「上市不足5日/20日」「不足14日」斜体提示", "刚上市的票历史不够指标计算窗口，前几个交易日这些指标为空（NULL）。这是正常的数据行为，不是故障。"],
       ["实时卡 量(万手)", "腾讯口径里 1 手 = 100 股，和上面 K 线表的「万股」不是同一个源、不同口径，两个数字不能直接比。"],
+      ["趋势线（K 线图）", "对当前显示窗口（30 / 60 / 全）的收盘价做最小二乘回归，画成虚线：向上=红色、向下=绿色。切窗口时重新拟合，和 MA 的「平均」不同——它反映的是这段的斜率方向。"],
       ["停牌 / 降级", "实时价卡：票停牌会显示「停牌或无行情」；上游数据源挂了会显示「实时获取失败，展示库内收盘」。"],
     ],
   },
@@ -1163,6 +1236,7 @@ const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
       ["持仓市值 / 总权益 / 累计盈亏(率)", "各持仓市价之和 / 再加现金得到总权益 / 相对初始资金（10 万）的盈亏。"],
       ["挂单", "自动交易（paper-auto）已经决策、但要等下一次 paper-auto 运行才成交的买卖指令。表里列出 代码 / 名称 / 信号日 / 原因（为什么触发）。"],
       ["已平仓 笔", "历史已卖出的交易笔数。"],
+      ["持仓相关性矩阵", "两两持仓最近 60 日日收益的 Pearson 相关（−1~1，对角线恒 1）。红=同向、绿=反向、越深越接近 ±1。多对 >0.6 说明组合实际押的是同一类票、风险集中；接近 0 / 负值才是真分散。"],
     ],
   },
   {
@@ -1195,6 +1269,8 @@ const GLOSS_SECTIONS: { title: string; sub: string; rows: GlossRow[] }[] = [
       ["Calmar", "年化收益 ÷ 最大回撤，衡量承担回撤换来的收益。"],
       ["最大回撤%", "从净值峰值跌到谷底的最大跌幅。"],
       ["VaR95(日) / CVaR95(日)", "95% 置信下「最坏单日」预期损失 / 超过 VaR 的那 5% 日子的平均损失（尾部更凶）。"],
+      ["偏度", "日收益分布的对称性：≈0 基本对称；明显 <0 是「左偏」——平时小涨、偶尔大跌（肥左尾），>0 相反。绝对值越大越不对称。"],
+      ["超额峰度", "正态分布的峰度是 0。>0 = 「尖峰肥尾」（比正态更容易出极端日），<0 = 分布更平。配 CVaR 一起看尾部风险。"],
     ],
   },
   {

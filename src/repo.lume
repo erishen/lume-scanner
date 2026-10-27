@@ -763,7 +763,10 @@ export func indicators_payload(code, days, period) {
     max_drawdown_pct: max_drawdown(closes),
     var_95: value_at_risk(rets, 0.05) * 100.0,
     cvar_95: expected_shortfall(rets, 0.05) * 100.0,
+    // #57 分布形态: 日收益偏度/峰度(超额, 正态=0). skew 需 >=3 个收益, kurtosis 需 >=4, 不足则省略.
   };
+  if (len(rets) >= 3) { put(perf, "skew", skew(rets)); }
+  if (len(rets) >= 4) { put(perf, "kurtosis", kurtosis(rets)); }
   // ---- #55 Lume 侧信号判定(基于刚算出的序列尾值, 不读 ETL flag 列)----
   let sigs = [];
   let last_macd = tail_k(macd_line, 1)[0];
@@ -851,6 +854,67 @@ func paper_target_hit(p, price) {
   return pct >= tp * 100.0;
 }
 
+func paper_corr_matrix(codes, n) {
+  let m = len(codes);
+  let r = [];
+  let i = 0;
+  while (i < m) {
+    let row = [];
+    let j = 0;
+    while (j < m) {
+      let v = 1.0;
+      if (i != j) {
+        let a = paper_ret_series(codes[i], n);
+        let b = paper_ret_series(codes[j], n);
+        if (a != null and b != null) {
+          // 尾部对齐到较短序列(最近交易日), 再算 Pearson 相关
+          let la = len(a);
+          let lb = len(b);
+          let t = la;
+          if (lb < la) { t = lb; }
+          let sa = [];
+          let sb = [];
+          let k = 0;
+          while (k < t) {
+            push(sa, a[la - t + k]);
+            push(sb, b[lb - t + k]);
+            k = k + 1;
+          }
+          let cr = try(() => correlation(sa, sb));
+          if (get(cr, "err", null) == null) { v = float(get(cr, "ok", 0)); } else { v = null; }
+        } else { v = null; }
+      }
+      push(row, v);
+      j = j + 1;
+    }
+    push(r, row);
+    i = i + 1;
+  }
+  return r;
+}
+// 60 日日收益序列(持仓相关性用). close 不足 2 根返回 null.
+func paper_ret_series(code, n) {
+  let db = db_scan();
+  let rows = sql_query(db,
+    "select close from stock_analysis where code = ? order by date desc limit ?",
+    [code, n + 1]);
+  if (len(rows) < 2) { return null; }
+  let asc = [];
+  let i = len(rows) - 1;
+  while (i >= 0) { push(asc, rows[i]); i = i - 1; }
+  let closes = col_of(asc, "close");
+  let rets100 = pct_change(closes);
+  let out = [];
+  i = 0;
+  while (i < len(rets100)) {
+    let v = rets100[i];
+    if (v == v) { push(out, v); }
+    i = i + 1;
+  }
+  if (len(out) < 2) { return null; }
+  return out;
+}
+
 export func paper_payload() {
   if (int(get(PAPER_CACHE, "exp", 0)) >= now()) { return get(PAPER_CACHE, "data", PAPER_CACHE); }
   let path = env("PAPER_PORTFOLIO");
@@ -932,6 +996,8 @@ export func paper_payload() {
     push(pn, onew);
     ni = ni + 1;
   }
+  // #57 持仓两两相关性(60 日日收益 Pearson, correlation 内建; 常数序列 → null)
+  let cm = paper_corr_matrix(ks, 60);
   let payload = {
     ok: true,
     ts: now(),
@@ -944,6 +1010,8 @@ export func paper_payload() {
     positions: positions,
     closed: int(len(get(d, "closed", []))),
     pending: pn,
+    corr_window: 60,
+    corr_matrix: cm,
   };
   put(PAPER_CACHE, "exp", now() + 30);
   put(PAPER_CACHE, "data", payload);

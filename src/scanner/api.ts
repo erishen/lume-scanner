@@ -143,6 +143,9 @@ export interface IndicatorsPayload {
     max_drawdown_pct: number | null;
     var_95: number | null;
     cvar_95: number | null;
+    /** #57 分布形态(日收益): 偏度 / 超额峰度(正态=0), 收益不足 3/4 个时缺省 */
+    skew?: number | null;
+    kurtosis?: number | null;
   } | null;
   lume_signals: string[];
 }
@@ -308,6 +311,10 @@ export interface PaperPayload {
   positions?: PaperPosition[];
   closed?: number | null;
   pending?: Array<{ side?: string; code?: string; name?: string | null; signal_date?: string; reason?: string }>;
+  /** #57 持仓两两相关性窗口(日) */
+  corr_window?: number | null;
+  /** 持仓两两相关性矩阵 [i][j] = Pearson(最近 corr_window 日日收益), 对角线=1, 不可算=null; 与 positions 顺序一致 */
+  corr_matrix?: Array<Array<number | null>>;
 }
 
 export async function fetchPaper(): Promise<PaperPayload> {
