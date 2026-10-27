@@ -331,7 +331,7 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .glossary h3 span { font-weight: 400; color: var(--faint); font-size: 12px; }
 /* 定宽表: 列宽按首行百分比分配, 内容在格内换行, 永不撑出(左右 16px 对称留白) */
 .glossary table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+.glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .glossary tr:last-child td { border-bottom: 0; }
 .glossary .gloss-field { width: 34%; color: var(--text); font-weight: 600; }
 /* SVG 示意图: 比原 150px 更大(300px 清晰可读)但不撑满整列, 窄屏随列收缩出界; 圆角底 */
