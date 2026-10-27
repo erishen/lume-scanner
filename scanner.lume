@@ -7,7 +7,7 @@
 //   GET  /api/stock/:code  个股 K 线 + 指标序列(近 N 日, join asset 快照取名称/市值)
 //   GET  /api/meta       数据源/行数/最新交易日(前端「数据截至」)
 //
-// 架构(同 lume-orbstack 范式):
+// 架构: 宿主 ETL 产库 → Lume 只读服务 + React 前端:
 //   - 信号「计算」(51 指标 ETL)留在 Python 端 stock-analyzer(每晚 make etl),
 //     本服务只读其 SQLite(sql_query 单语句 + SELECT-only 护栏), 零写操作。
 //   - 库路径经 env SCANNER_DB / ASSET_DB 指定; make dev 默认指向 .data/scanner.db

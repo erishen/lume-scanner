@@ -9,8 +9,6 @@ Williams/ATR/OBV/绩效风险, 不依赖 Python ETL 指标列)、**实时行情*
 内置 LLM agent 聊天(可直查库 + 查实时价)。信号「计算」留在 Python ETL 端(每日 18:30 launchd
 增量更新), 本服务零写操作。
 
-范式同 [`lume-orbstack`](../lume-orbstack):宿主 ETL 产库 → Lume 只读服务 + React 前端。
-
 ## 三种启动方式
 
 | 方式 | 命令 | 数据源 | 场景 |

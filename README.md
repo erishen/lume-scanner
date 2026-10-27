@@ -17,9 +17,6 @@ read-only mode:
 Signal *computation* stays on the Python ETL side (host launchd, incremental daily at 18:30).
 This service performs **zero writes**.
 
-The pattern is the same as [`lume-orbstack`](../lume-orbstack): host ETL produces databases →
-Lume read-only service + React frontend.
-
 ## Three ways to run
 
 | Mode | Command | Data source | Use case |
