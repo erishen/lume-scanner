@@ -106,6 +106,16 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 
 `make real` 与 docker compose 都注入 `HARNESS_TOOLS_ALLOW`(Makefile `SCANNER_TOOLS`, 不含 `sql_write`)。
 
+## 相关项目
+
+| 仓库 | 角色 |
+|---|---|
+| [lume](https://github.com/erishen/lume) | Lume 单二进制 C11 宿主框架 (agent-httpd)。发布版: [lume/releases](https://github.com/erishen/lume/releases) |
+| [lume-core](https://github.com/erishen/lume-core) | 语言树 + 量化内建的事实来源 (当前 release: [v0.11.0](https://github.com/erishen/lume-core/releases/tag/v0.11.0))。本服务调用的正是它提供的量化内建 (kdj/atr/obv/rsi_cutler/绩效风险…) |
+
+版本说明: Docker 基座镜像是**从宿主 `lume` 树源码重编**的 (Dockerfile.scanner), 而不是直接拉 release 二进制 —— 因为 scanner 需要量化内建, 最新 release tag 未必已包含。
+若要改为 pin 到某个 release 版本, 请选已带全这些内建的 `lume` tag, 否则 `/api/indicators` 会报 `undefined variable`。
+
 ## 安全
 
 - 默认绑 `127.0.0.1`; 对外部署注入 `HTPASSWD_FILE` 开 Basic Auth。docker compose 端口

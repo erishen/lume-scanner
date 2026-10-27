@@ -124,6 +124,19 @@ If data goes stale for >3 days, stock-analyzer's `check-stale` job pushes a Ding
 Both `make real` and docker compose inject `HARNESS_TOOLS_ALLOW` (the `SCANNER_TOOLS` list in the
 Makefile; `sql_write` is never included).
 
+## Related projects
+
+| Repo | Role |
+|---|---|
+| [lume](https://github.com/erishen/lume) | Lume single-binary C11 host framework (agent-httpd). Releases: [lume/releases](https://github.com/erishen/lume/releases) |
+| [lume-core](https://github.com/erishen/lume-core) | Language tree + the source of truth for the quant builtins (current release: [v0.11.0](https://github.com/erishen/lume-core/releases/tag/v0.11.0)). This service calls its quant builtin set (kdj/atr/obv/rsi_cutler/perf-risk/…) |
+
+Note on versions: the Docker base image **recompiles the `lume` host tree from source**
+(Dockerfile.scanner) rather than pulling a release binary, because the scanner needs the quant
+builtins that the latest release tag may not yet ship. If you pin a release instead, use a
+`lume` tag that already includes those builtins — otherwise `/api/indicators` fails with
+`undefined variable`.
+
 ## Security
 
 - Binds `127.0.0.1` by default; inject `HTPASSWD_FILE` to enable Basic Auth for external
