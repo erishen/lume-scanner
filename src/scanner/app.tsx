@@ -1237,7 +1237,7 @@ const refL = { strokeDasharray: "3 3", stroke: "var(--faint)", strokeWidth: 1 } 
 function FigResonance() {
   const d: [string, number, number][] = [["≥1", 4603, 40], ["≥2", 2286, 30], ["≥3", 544, 18], ["≥4", 106, 12], ["≥5", 15, 7]];
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       {d.map(([lab, cnt, h], i) => (
         <g key={lab} transform={`translate(${6 + i * 29},0)`}>
           <rect x={0} y={46 - h} width={20} height={h} rx={2} fill={i === 0 ? "var(--faint)" : FIG.up} opacity={0.8} />
@@ -1251,7 +1251,7 @@ function FigResonance() {
 // MACD: DIF 上穿 DEA = 金叉(柱由绿翻红)
 function FigMACD() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={34} y2={34} {...axis} />
       <path d="M4 44 C 40 40, 58 32, 76 24 S 120 14, 146 10" fill="none" stroke={FIG.blue} strokeWidth={2} />
       <path d="M4 38 C 40 36, 64 33, 82 28 S 124 22, 146 19" fill="none" stroke={FIG.warn} strokeWidth={2} />
@@ -1265,7 +1265,7 @@ function FigMACD() {
 // KDJ: K 上穿 D
 function FigKDJ() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={10} y2={10} {...refL} /><text x={120} y={8} fontSize={7} fill="var(--faint)">100</text>
       <line x1={0} x2={150} y1={52} y2={52} {...refL} /><text x={120} y={58} fontSize={7} fill="var(--faint)">0</text>
       <path d="M4 48 C 30 44, 50 30, 70 40 S 110 52, 146 34" fill="none" stroke={FIG.blue} strokeWidth={2} />
@@ -1278,7 +1278,7 @@ function FigKDJ() {
 // RSI: 70/30 阈值带, 线跌破 30 = 超卖
 function FigRSI() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={14} y2={14} {...refL} /><text x={122} y={12} fontSize={7} fill={FIG.down}>70 超买</text>
       <line x1={0} x2={150} y1={46} y2={46} {...refL} /><text x={122} y={52} fontSize={7} fill={FIG.up}>30 超卖</text>
       <path d="M4 30 C 24 24, 40 36, 58 30 S 92 22, 110 40 S 134 54, 146 50" fill="none" stroke={FIG.blue} strokeWidth={2} />
@@ -1289,7 +1289,7 @@ function FigRSI() {
 // Williams %R: 0~−100 刻度, 破 −80 超卖
 function FigWilliams() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       {[["0", 10, FIG.down], ["−20", 20, FIG.warn], ["−80", 44, FIG.up], ["−100", 56, FIG.up]].map(([lab, y]) => (
         <g key={String(lab)}>
           <line x1={0} x2={14} y1={Number(y)} y2={Number(y)} {...axis} />
@@ -1304,7 +1304,7 @@ function FigWilliams() {
 // 布林带: 价线上穿 mid±2σ 上轨
 function FigBoll() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <path d="M4 16 C 40 12, 90 12, 146 14" fill="none" stroke={FIG.up} strokeWidth={1.5} />
       <path d="M4 32 C 40 32, 90 32, 146 30" fill="none" stroke="var(--muted)" strokeWidth={1} strokeDasharray="4 3" />
       <path d="M4 48 C 40 52, 90 52, 146 48" fill="none" stroke={FIG.down} strokeWidth={1.5} />
@@ -1319,7 +1319,7 @@ function FigBoll() {
 function FigVolRatio() {
   const bars = [22, 18, 24, 20, 23];
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={54} y2={54} {...axis} />
       <line x1={0} x2={126} y1={32} y2={32} {...refL} /><text x={128} y={35} fontSize={7} fill="var(--faint)">5 日均</text>
       {bars.map((h, i) => (
@@ -1333,7 +1333,7 @@ function FigVolRatio() {
 // OBV: 涨日加量 / 跌日减量
 function FigOBV() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={52} y2={52} {...axis} />
       <path d="M4 48 L24 38 L40 44 L60 30 L80 38 L100 22 L120 30 L146 14" fill="none" stroke={FIG.blue} strokeWidth={2} />
       <path d="M4 48 L24 52 L40 44" fill="none" stroke={FIG.down} strokeWidth={1.5} strokeDasharray="3 2" />
@@ -1345,7 +1345,7 @@ function FigOBV() {
 // 最大回撤: 净值峰值→谷底
 function FigDrawdown() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={54} y2={54} {...axis} />
       <path d="M4 48 L34 14 L52 30 L74 10 L104 44 L146 22" fill="none" stroke={FIG.blue} strokeWidth={2} />
       <circle cx={74} cy={10} r={2.5} fill="var(--text)" />
@@ -1360,7 +1360,7 @@ function FigDrawdown() {
 // 止损: 现价跌破成本 −8% 虚线
 function FigStop() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={54} y2={54} {...axis} />
       <line x1={0} x2={150} y1={20} y2={20} stroke="var(--text)" strokeWidth={1} strokeDasharray="5 3" />
       <text x={4} y={16} fontSize={7} fill="var(--text)">成本价</text>
@@ -1375,7 +1375,7 @@ function FigStop() {
 // K 线蜡烛: 红涨 / 绿跌 + MA 线穿过
 function FigCandle() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       {[
         [16, 20, 34, FIG.up], [44, 12, 30, FIG.up], [72, 18, 42, FIG.down], [100, 26, 44, FIG.down], [128, 10, 38, FIG.up],
       ].map(([x, top, bot, col]) => (
@@ -1393,7 +1393,7 @@ function FigCandle() {
 // RSI 双口径: Wilder 平滑 / Cutler 敏感
 function FigRSI2() {
   return (
-    <svg width={150} height={62} viewBox="0 0 150 62" style={figStyle}>
+    <svg width={260} height={107} viewBox="0 0 150 62" style={figStyle}>
       <line x1={0} x2={150} y1={14} y2={14} {...refL} /><text x={118} y={11} fontSize={7} fill={FIG.down}>70</text>
       <line x1={0} x2={150} y1={46} y2={46} {...refL} /><text x={118} y={52} fontSize={7} fill={FIG.up}>30</text>
       <path d="M4 30 C 30 24, 50 38, 74 32 S 116 24, 146 30" fill="none" stroke={FIG.blue} strokeWidth={2} />

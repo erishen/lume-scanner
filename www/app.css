@@ -330,7 +330,8 @@ tr.rowlink:hover td[title] { color: var(--blue); }
 .glossary table { width: 100%; border-collapse: collapse; }
 .glossary td { padding: 6px 8px; border-bottom: 1px solid var(--border-soft); font-size: 13.5px; vertical-align: top; }
 .glossary tr:last-child td { border-bottom: 0; }
-.glossary .gloss-field { width: 34%; min-width: 180px; color: var(--text); font-weight: 600; white-space: nowrap; }
+.glossary .gloss-field { width: 34%; min-width: 180px; color: var(--text); font-weight: 600; }
+.glossary td:last-child svg { max-width: 100%; }
 .gloss-hasfig { font-size: 9.5px; color: var(--blue); border: 1px solid var(--border); border-radius: 5px; padding: 0 4px; margin-left: 6px; vertical-align: middle; font-weight: 400; }
 .gloss-search { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
 .gloss-search input {
