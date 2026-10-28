@@ -267,7 +267,7 @@ function SignalsTab({ onStock, onInd }: Openers) {
                 <div className="sc-top">
                   <span className="sc-code">{s.code}</span>
                   <span className="sc-name">{s.name || "—"}</span>
-                  <span className={`sc-reso ${s.sig_cnt >= 4 ? "hot" : ""}`} title={`同时命中 ${s.sig_cnt ?? s.signals.length} 个信号`}>
+                  <span className={`sc-reso ${(s.sig_cnt ?? s.signals.length) >= 4 ? "hot" : ""}`} title={`同时命中 ${s.sig_cnt ?? s.signals.length} 个信号`}>
                     {s.sig_cnt ?? s.signals.length}信号
                   </span>
                 </div>
@@ -1464,8 +1464,8 @@ function FigCandle() {
         [16, 20, 34, FIG.up], [44, 12, 30, FIG.up], [72, 18, 42, FIG.down], [100, 26, 44, FIG.down], [128, 10, 38, FIG.up],
       ].map(([x, top, bot, col]) => (
         <g key={Number(x)}>
-          <line x1={Number(x)} y1={Number(top) - 4} x2={Number(x)} y2={Number(bot) + 4} stroke={col} strokeWidth={1} />
-          <rect x={Number(x) - 5} y={Number(top)} width={10} height={Number(bot) - Number(top)} fill={col} opacity={0.85} />
+          <line x1={Number(x)} y1={Number(top) - 4} x2={Number(x)} y2={Number(bot) + 4} stroke={String(col)} strokeWidth={1} />
+          <rect x={Number(x) - 5} y={Number(top)} width={10} height={Number(bot) - Number(top)} fill={String(col)} opacity={0.85} />
         </g>
       ))}
       <path d="M4 40 C 40 34, 70 26, 100 22 S 130 16, 146 14" fill="none" stroke={FIG.blue} strokeWidth={1.5} />
@@ -1532,12 +1532,13 @@ function GlossaryTab() {
             <tbody>
               {s.rows.map(([f, d]) => {
                 const Fig = FIGS[f];
+                const hasFig = Fig !== undefined;
                 return (
                   <tr key={f}>
-                    <td className="gloss-field">{f}{Fig ? <span className="gloss-hasfig"> 有图</span> : null}</td>
+                    <td className="gloss-field">{f}{hasFig ? <span className="gloss-hasfig"> 有图</span> : null}</td>
                     <td>
                       {d}
-                      {Fig ? <Fig /> : null}
+                      {hasFig && Fig ? <Fig /> : null}
                     </td>
                   </tr>
                 );
