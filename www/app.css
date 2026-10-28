@@ -54,6 +54,8 @@ body {
   display: inline-block;
 }
 .hero .meta { color: var(--muted); font-size: 14px; text-align: right; line-height: 1.5; }
+/* 口径提示: 盘中/待更新时说明"信号基于上一交易日收盘", 弱化但不抢主信息 */
+.hero .meta .meta-note { color: var(--faint); font-size: 12.5px; }
 .tabs {
   position: sticky;
   top: 0;

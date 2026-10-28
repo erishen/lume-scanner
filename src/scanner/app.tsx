@@ -25,13 +25,35 @@ const TABS: [Tab, string][] = [
 
 // ---- 交易时段门控: 仅工作日 09:30-11:30 / 13:00-15:00(Asia/Shanghai)盘中轮询, 否则停 ----
 // 收盘后腾讯价已冻结, 继续 5s/30s 轮询只浪费且让用户误以为在动; 门控后停轮询并标注时段。
-// 跑在浏览器: 取 viewer 本地 new Date(), 换算成 UTC+8 墙钟(A股按沪市时区判定), 与 viewer 所在时区无关。
+// 跑在浏览器: 用 Intl 直接取 Asia/Shanghai 墙钟, 与 viewer 所在时区无关。
+// 注: 旧写法(now.getTime()+8h 再取 getUTC*)其实也是对的 —— getTime() 是绝对毫秒,
+// 与时区无关; 改成 Intl 是为了把"上海时区"显式表达出来, 不再依赖"UTC+8 恒无夏令时"的隐含前提。
+function cstParts(now0 = new Date()): { y: number; mo: number; d: number; wd: number; mins: number } {
+  // en-CA 的 'YYYY-MM-DD' + hourCycle h23 保证 0-23, 避免 '24:00' 边界。
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+  const p: Record<string, string> = {};
+  for (const x of fmt.formatToParts(now0)) if (x.type !== "literal") p[x.type] = x.value;
+  const y = Number(p.year), mo = Number(p.month), d = Number(p.day);
+  // 用「上海日期」反推周几: Date.UTC 的 getUTCDay 与真实星期一致。
+  const wd = new Date(Date.UTC(y, mo - 1, d)).getUTCDay(); // 周日0 ... 周六6
+  return { y, mo, d, wd, mins: Number(p.hour) * 60 + Number(p.minute) };
+}
+
 function isTradingNow(now0 = new Date()): boolean {
-  const cst = new Date(now0.getTime() + 8 * 3600 * 1000);
-  const wd = cst.getUTCDay(); // 周一1 ... 周日0
+  const { wd, mins } = cstParts(now0);
   if (wd === 0 || wd === 6) return false;
-  const mins = cst.getUTCHours() * 60 + cst.getUTCMinutes();
   return (mins >= 570 && mins <= 690) || (mins >= 780 && mins <= 900);
+}
+
+// 今日(Asia/Shanghai)的 YYYY-MM-DD, 与库里 date 列同格式。
+function cstTodayStr(now0 = new Date()): string {
+  const { y, mo, d } = cstParts(now0);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${y}-${p(mo)}-${p(d)}`;
 }
 
 // ---- 轻量 SVG 折线(null 值断开, 支持多序列)----
@@ -1614,11 +1636,25 @@ export function App() {
   // 某页手动操作后回调: 更新共享 focus(若与该页 seed 相同, 页面内 lastAuto 守卫会跳过重载)
   const query = (code: string) => setFocus(code);
   const active = useMemo(() => TABS.find(([t]) => t === tab)?.[1] ?? "", [tab]);
+  // 口径提示: 信号基于"最近一个完整交易日"的收盘数据, 不是实时价。
+  // 盘中/当日任务未跑完时, 最新日期必然落后于今天 —— 明确说出来, 避免被误读成数据断了。
+  const staleNote = useMemo(() => {
+    const latest = meta?.latest_date;
+    if (!latest) return "";
+    const today = cstTodayStr();
+    if (latest >= today) return "";
+    return isTradingNow()
+      ? `今日(${today})盘中, 信号待收盘后生成`
+      : `今日(${today})数据待更新`;
+  }, [meta?.latest_date]);
   return (
     <div className="app">
       <div className="hero">
         <h1>Signal Scanner</h1>
-        <div className="meta">{meta?.latest_date ? `数据截至 ${meta.latest_date}` : "加载中"}</div>
+        <div className="meta">
+          {meta?.latest_date ? `信号基于 ${meta.latest_date} 收盘` : "加载中"}
+          {staleNote && <span className="meta-note"> · {staleNote}</span>}
+        </div>
       </div>
       <div className="tabs">
         {TABS.map(([t, label]) => (
