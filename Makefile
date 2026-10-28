@@ -76,8 +76,19 @@ watch:
 
 # 全量真实库: 不用样例库, 直接指向 stock-analyzer 的 data/ 双库(8.5M 行, 走索引毫秒级)
 REAL_DATA ?= ../../../invest-kit/apps/stock-analyzer/data
+# agent 原生 SQL 工具(sql_query/sql_tables/sql_schema)只有在 SQLITE_DB 存在时才注册
+# (agent-httpd/src/agent/sqlite_tool.c: sqlite_tools_init)。dev 用样例库, real 用全量库,
+# 两处各指向当次运行的 SCANNER_DB, 保证本地与容器(compose 里同一变量)行为一致。
+SCANNER_DB_PATH ?= $(if $(filter real,$(MAKECMDGOALS)),$(REAL_DATA)/stock_analysis.db,.data/scanner.db)
 # agent 工具白名单(本地只读 3 个 + SQL introspect + 基础工具, 不放行 sql_write)
 SCANNER_TOOLS ?= scan_signals,screen_stocks,stock_kline,stock_indicators,realtime_quote,market_indexes,signal_stats,daily_picks,paper_portfolio,data_freshness,sql_query,sql_tables,sql_schema,read_file,get_time
+
+# agent 技能白名单: 限制 llm-router 从上游网关同步下来的共享技能目录(skills/router/)。
+# 扫描器只保留投资周报 weekly-investment; 其余 code-review/rust-review/hot-news-post(写社媒)/post-comment(写 WP)
+# 等与股票无关或写型技能一律不暴露(单一职责 + 零写基调)。
+# 注: 若完全不注入该环境变量, agent-httpd 会放行全部 router 同步技能(见 skills.c 的 skill_allowed);
+#     空字符串同样=放行全部, 故此处必须给具体值, 不能设空。
+SCANNER_SKILLS ?= weekly-investment
 
 # Docker 构建/运行 (OrbStack daemon; 沙箱无 DOCKER_HOST 时由宿主终端跑)
 # 基座: 容器内重编当前宿主 lume/ C 源码(带 #54/#55 内建, 非老 v0.6.3), 静态 Linux bin/lume。
@@ -108,7 +119,9 @@ real: stop check
 	@$(ESBUILD) src/scanner/app.tsx --bundle --minify --format=esm --jsx=automatic --outdir=www --outbase=src/scanner &
 	@sleep 1
 	@SCANNER_DB=$(REAL_DATA)/stock_analysis.db ASSET_DB=$(REAL_DATA)/asset_snapshot.db PAPER_PORTFOLIO=$(REAL_DATA)/paper_portfolio.json \
+		SQLITE_DB=$(SCANNER_DB_PATH) \
 		HARNESS_TOOLS_ALLOW=$(SCANNER_TOOLS) \
+		HARNESS_SKILLS_ALLOW=$(SCANNER_SKILLS) \
 		$(LUME) scanner.lume
 
 # 日常入口(热更): stop(清旧实例)→ check → sample-data → esbuild --watch(后台)→ 前台起 Lume。
@@ -119,6 +132,6 @@ dev: stop check sample-data
 	@$(ESBUILD) src/scanner/app.tsx --bundle --format=esm --jsx=automatic --outdir=www --outbase=src/scanner --watch &
 	@sleep 1
 	@echo "▶ esbuild watch 后台运行;Ctrl-C 停服务(make stop 清残留 watch)"
-	@$(LUME) scanner.lume
+	@SQLITE_DB=$(SCANNER_DB_PATH) HARNESS_SKILLS_ALLOW=$(SCANNER_SKILLS) $(LUME) scanner.lume
 
 .PHONY: default dev stop check typecheck sample-data ui ui-dev watch docker docker-base docker-app docker-up docker-down

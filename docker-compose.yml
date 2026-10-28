@@ -34,6 +34,14 @@ services:
       # 前端 bundle 走宿主实时文件(改 app.tsx → make ui 即生效, 无需重建镜像);
       # 镜像内置 www/ 仅作无挂载时的 fallback。
       - ./www:/app/www:ro
+      # 技能目录: 容器以 uid 10001 运行, /app 属 root 不可写, 而 Lume 启动时
+      # router 同步会把技能写到 cwd/skills/router/<name>/SKILL.md(mkdir 失败即
+      # 静默跳过, 日志仍报 synced)。故需要一个可写落点。
+      # 只挂 weekly-investment 这一级(而非整个 skills/): 其余 4 个共享技能
+      # (code-review / rust-review / hot-news-post / post-comment, 后两个带写能力)
+      # 在容器内根本不可见。配合 sync 期按白名单裁剪, 形成两层约束:
+      # 白名单被误设为空时, 磁盘上也没有别的技能可暴露。
+      - ./skills/router/weekly-investment:/app/skills/router/weekly-investment
     environment:
       LUME_BIND: "0.0.0.0"          # 容器对外
       LUME_PORT: "8094"
@@ -42,8 +50,17 @@ services:
       ASSET_DB: /app/data/asset_snapshot.db
       # 模拟仓: stock-analyzer 每日自动交易落盘的 paper_portfolio.json(只读挂载进 /app/data)
       PAPER_PORTFOLIO: /app/data/paper_portfolio.json
+      # agent 原生 SQL 工具(sql_query/sql_tables/sql_schema)只在设置了 SQLITE_DB
+      # 时注册(见 agent-httpd/src/agent/sqlite_tool.c: sqlite_tools_init)。
+      # 主库选 stock_analysis(845M+ 行, 业务核心); 只读挂载 + 连接以
+      # SQLITE_OPEN_READONLY 打开, SELECT-only, 物理上无法写。
+      # 另一份 asset_snapshot.db 可在 sql_query 里 ATTACH 后访问。
+      SQLITE_DB: /app/data/stock_analysis.db
       # agent 工具白名单(同宿主 make real 的 SCANNER_TOOLS)
       HARNESS_TOOLS_ALLOW: scan_signals,screen_stocks,stock_kline,stock_indicators,realtime_quote,market_indexes,signal_stats,daily_picks,paper_portfolio,data_freshness,sql_query,sql_tables,sql_schema,read_file,get_time
+      # agent 技能白名单: 只保留投资周报, 屏蔽 router 同步下来的代码/社媒等无关/写型共享技能
+      # (不设则 agent-httpd 默认暴露全部; 空字符串仍=放行全部, 故用 weekly-investment 显式指定)
+      HARNESS_SKILLS_ALLOW: ${HARNESS_SKILLS_ALLOW:-weekly-investment}
       # AI 聊天: 容器内经 host.docker.internal 回连宿主 LLM 网关(tsm-hub:19070)。
       # 注意: LLM_API_URL 必须显式写容器视角 —— docker compose 会自动读本目录 .env
       # 做插值, .env 里的 localhost:19070 在容器内指向容器自身, 会导致上游 502。
