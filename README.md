@@ -163,6 +163,26 @@ builtins that the latest release tag may not yet ship. If you pin a release inst
   respective owners.
 - Past performance does not guarantee future results.
 
+## Privacy
+
+This repository is public. Code, docs and examples must not contain real household
+network identifiers (LAN subnet, host IP, gateway/device MACs, device names).
+Use the reserved example values instead: `192.168.1.x`, `aa:bb:cc:dd:ee:ff`.
+
+```bash
+make privacy          # tracked + untracked files
+make privacy LOCAL=1  # also diff against this host's snapshot, if present
+```
+
+Untracked files are included on purpose. A newly written file is exactly where a
+copied field note or a pasted `curl` command lands, and a tracked-only scan never
+sees it before `git add` — by which point the content is one commit away from
+being published. Files covered by `.gitignore` are skipped: they never reach the
+repository, so reporting them would only bury the real hits.
+
+`make test` covers the scan *scope*, not just the rules — if someone narrows it
+back to tracked files only, the test goes red.
+
 ## License
 
 MIT

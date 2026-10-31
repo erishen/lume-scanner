@@ -1,0 +1,448 @@
+// peer_node.lume — 把选股扫描器(lume-scanner)暴露成局域网 peer 节点
+//
+// 用途: 让 lume-scanner 能被其它 lume 应用(如 lume-lan 的"应用互访")发现与查询。
+// 与 scanner.lume **完全独立**: 各自一个 server{}, 扫描器本体一行都不用改。
+//
+// 启动:
+//   PEER_SHARED=<共享密钥> PEER_NAME=scanner PEER_PORT=18103 \
+//     PEER_BIND=127.0.0.1 ../lume/bin/lume peer_node.lume
+//
+// 端点(全部需 HMAC 签名; 未配时整面关闭):
+//   GET  /peer/health   健康与身份
+//   GET  /peer/tools    能力清单
+//   GET  /peer/info     数据新鲜度(最新交易日 / 股票数 / 行数)
+//   POST /peer/invoke   执行一个声明的工具
+//
+// ── 安全边界 ──────────────────────────────────────────────────────
+// * **只读**。扫描器只有 ETL 写库(由自己的任务跑), peer 面不提供任何写。
+// * 行情数据本身不是个人数据, 但**完整性**重要: 这里只暴露已经落库的结果,
+//   不触发重算(重算要跑 ETL, 属于扫描器自己的调度)。
+// * 签名/防重放/明文传输的约束见 lume-core/lib/peer.lume 文件头。
+import "../lume-core/lib/peer.lume" as peer;
+import "src/repo.lume" as repo;
+import "src/peer/agent.lume" as agent;
+import "src/a2a.lume" as a2a;
+import "src/a2a_tasks.lume" as tasks;
+
+let bind_addr = env("PEER_BIND");
+if (bind_addr == null) { bind_addr = "127.0.0.1"; }
+let port_s = env("PEER_PORT");
+if (port_s == null) { port_s = "18103"; }
+let site_name = env("PEER_SITE_NAME");
+if (site_name == null) { site_name = "lume-scanner"; }
+
+server {
+  port = int(port_s);
+  workers = 2;
+  bind = bind_addr;
+};
+
+// 启动自检：把"实际生效的签名模式"打到日志。配了两套凭据时(历史遗留很常见)
+// 不主动看 health 就分不清用的是哪一套 —— 拿错算法签名会一路 401, 现象像密钥错。
+if (len(peer.config_warnings()) > 0) {
+  print("[peer] signature mode: " + peer.key_mode());
+  let wi = 0;
+  while (wi < len(peer.config_warnings())) {
+    print("[peer] WARN " + str(get(peer.config_warnings(), wi, "")));
+    wi = wi + 1;
+  }
+}
+
+get "/peer/health", (req) => {
+  let v = peer.verify_get(req);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  return {
+    ok: true, node: peer.node_info()["name"], site: site_name,
+    peer: get(v, "node", ""), ts: int(now()),
+    // 实际生效的签名模式 + 配置自检(见 lume-core/lib/peer.lume 的 key_mode)
+    mode: peer.key_mode(), warnings: peer.config_warnings(),
+  };
+};
+
+// 能力清单的单一事实源。
+func tool_list() {
+  return [
+    {
+      name: "scanner.meta",
+      desc: "最新交易日、覆盖股票数、分析行数(数据新鲜度)",
+      when_to_use: "用户问「扫描器数据到哪天了/覆盖多少只股票」时用。" +
+                   "不要用 fs 去读 .data 下的 db 文件自己数。",
+    },
+    {
+      name: "scanner.signals",
+      desc: "全市场技术信号共振榜(按同时命中信号数排序)",
+      when_to_use: "用户问「今天有哪些信号共振的票」「金叉/超卖的有哪些」时用。" +
+                   "可选 limit(默认 20, 上限 200) 与 min_sig(默认 2, 尽量别用 1 —— " +
+                   "≥1 个信号覆盖八成股票, 没有信息量)。",
+    },
+    {
+      name: "scanner.picks",
+      desc: "扫描器选出的标的清单",
+      when_to_use: "用户问「扫描器今天选出了什么」时用。",
+    },
+  ];
+}
+
+func app_summary() {
+  return "A 股全市场扫描结果(只读): 交易日覆盖、信号共振榜、选股清单。" +
+         "查行情信号与扫描结果时用这里。触发重算/改参数不在这条链路上。";
+}
+
+// 本机 agent 是否可达 —— 让对端在委派前先判断, 而不是拿到一个空回答。
+// 没有这个端点, 主 agent 那边只能"试着问", 失败后才知道对方没装 agent。
+get "/peer/agent", (req) => {
+  let v = peer.verify(req, "GET", "GET " + peer.path_only(req.path));
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let p = agent.ping();
+  return {
+    ok: true, node: peer.node_info()["name"], site: site_name,
+    endpoint: agent.endpoint(),
+    agent_ok: get(p, "ok", false),
+    agent_status: get(p, "status", 0),
+    agent_error: get(p, "error", ""),
+  };
+};
+
+get "/peer/tools", (req) => {
+  let v = peer.verify_get(req);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  return {
+    ok: true, node: peer.node_info()["name"], site: site_name,
+    summary: app_summary(), tools: tool_list(),
+  };
+};
+
+get "/peer/info", (req) => {
+  let v = peer.verify_get(req);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let m = repo.meta_payload();
+  return {
+    ok: true, node: peer.node_info()["name"], site: site_name, ts: int(now()),
+    latest_date: get(m, "latest_date", null),
+    stocks: get(m, "stocks", 0),
+    analysis_rows: get(m, "analysis_rows", 0),
+  };
+};
+
+// 接收对端的提问, 转发给本机 agent。
+//
+// 这是"委派"的入口: 主 agent 调 scanner__ask("哪些信号值得看") 时, 请求落到
+// 这里, 由 scanner 自己的 agent 决定查什么、怎么答 —— 与 <node>__<tool>
+// 那种"取一条数据"有本质区别。
+post "/peer/ask", (req) => {
+  let body = str(get(req, "body", ""));
+  let v = peer.verify(req, "POST", "POST " + peer.path_only(req.path) + "\n" + body);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let parsed = try(() => json(body));
+  if (parsed.err != null) { return { ok: false, error: "body 不是合法 JSON" }; }
+  let question = str(get(parsed.ok, "question", ""));
+  if (len(question) == 0) { return { ok: false, error: "缺少 question 字段" }; }
+  let session_id = str(get(parsed.ok, "sessionId", ""));
+
+  // ── 跳数预算: 防止委派成环 ────────────────────────────────────
+  //
+  // 场景: 主 agent 问 scanner → scanner 的 agent 又委派回主 agent(或转给
+  // 第三人)→ 一路转下去。每跳都是一次完整 LLM 调用, 成环就是无限烧钱。
+  // 业界有过四 agent 交接循环烧掉 $47,000 token 才被发现的案例。
+  //
+  // 两道闸:
+  //   1. hop 计数 —— 每经过一次委派 +1, 超过 MAX_HOPS 直接拒;
+  //   2. trace 名单 —— 本次调用的节点链, 已出现过的节点不再进(成环立刻断)。
+  // 只用其一不够: 计数挡不住"两节点来回"(2 跳内可无限循环),
+  // 名单挡不住"长链但不成环"(仍会烧掉 N 次调用)。两者互补。
+  let max_hops_s = env("PEER_MAX_HOPS");
+  let max_hops = 2;
+  if (max_hops_s != null) { max_hops = int(max_hops_s); }
+  if (max_hops < 1) { max_hops = 1; }
+  let hop = int(get(parsed.ok, "hop", 0));
+  let trace = get(parsed.ok, "trace", []);
+  let me_name = peer.node_info()["name"];
+
+  if (hop >= max_hops) {
+    return { ok: false, error: "委派超过 " + str(max_hops) + " 跳, 已拒绝"
+                 + "(hop=" + str(hop) + "); 请直接问目标节点或改用取数工具",
+             hop: hop, trace: trace };
+  }
+  let i = 0;
+  while (i < len(trace)) {
+    if (str(get(trace, i, "")) == me_name) {
+      return { ok: false, error: "委派成环: " + me_name + " 已在调用链里("
+                   + stringify(trace) + "), 已拒绝",
+               hop: hop, trace: trace };
+    }
+    i = i + 1;
+  }
+
+  let a = agent.ask(question, session_id);
+  return {
+    ok: get(a, "ok", false),
+    node: peer.node_info()["name"],
+    site: site_name,
+    from: get(v, "node", ""),
+    question: question,
+    answer: get(a, "answer", ""),
+    // 工具轨迹: 让主 agent 能说清"结论基于哪些查询", 而不是转述黑箱
+    notes: get(a, "notes", []),
+    error: get(a, "error", ""),
+    complete: get(a, "complete", false),
+    // 回传本跳信息, 调用方可据此继续累加(见 peer_bridge 的 ask 处理)
+    hop: hop,
+    trace: trace,
+  };
+};
+
+// 执行本节点声明的一个工具。body: {"tool":"<name>","arguments":{...}}
+post "/peer/invoke", (req) => {
+  let body = str(get(req, "body", ""));
+  let v = peer.verify(req, "POST", "POST " + peer.path_only(req.path) + "\n" + body);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let parsed = try(() => json(body));
+  if (parsed.err != null) { return { ok: false, error: "body 不是合法 JSON" }; }
+  let tool_name = str(get(parsed.ok, "tool", ""));
+  if (len(tool_name) == 0) { return { ok: false, error: "缺少 tool 字段" }; }
+  let args = get(parsed.ok, "arguments", {});
+  if (args == null) { args = {}; }
+
+  if (tool_name == "scanner.meta") {
+    return { ok: true, node: peer.node_info()["name"], "tool": tool_name,
+             result: repo.meta_payload() };
+  }
+
+  if (tool_name == "scanner.signals") {
+    // 参数要夹紧: 这两个值直接进 SQL 的 LIMIT / HAVING, 不夹紧的话
+    // 调用方传 limit=999999 会把整表拉出来(响应体积与耗时都不可控)。
+    let limit = int(get(args, "limit", 20));
+    if (limit <= 0) { limit = 20; }
+    if (limit > 200) { limit = 200; }
+    let min_sig = int(get(args, "min_sig", 2));
+    if (min_sig < 1) { min_sig = 1; }
+    if (min_sig > 8) { min_sig = 8; }
+    return { ok: true, node: peer.node_info()["name"], "tool": tool_name,
+             result: repo.signals_payload(limit, min_sig) };
+  }
+
+  if (tool_name == "scanner.picks") {
+    return { ok: true, node: peer.node_info()["name"], "tool": tool_name,
+             result: repo.picks_payload() };
+  }
+
+  return { ok: false, "tool": tool_name,
+           error: "unknown tool '" + tool_name +
+                  "' (whitelist: scanner.meta, scanner.signals, scanner.picks)" };
+};
+
+// ══════════════════════════════════════════════════════════════════
+// A2A 兼容层(与 lume-blog / lume-lan / lume-crm 同一套规范)
+// ══════════════════════════════════════════════════════════════════
+//
+// agent_backed 传 **true**: 本节点背后有真的 agent(:18199), 可以通过
+// /peer/ask 做判断。这跟 crm 那种纯数据节点不同 —— Card 里要如实反映,
+// 否则客户端不知道该不该委派。
+get "/.well-known/agent-card.json", (req) => {
+  let ap = agent.ping();
+  return a2a.card(peer.node_info()["name"], app_summary(), tool_list(), "/a2a",
+                  get(ap, "ok", false));
+};
+
+post "/a2a", (req) => {
+  let body = str(get(req, "body", ""));
+  let parsed = try(() => json(body));
+  if (parsed.err != null) {
+    return { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } };
+  }
+  let rpc = parsed.ok;
+  let mid = get(rpc, "id", null);
+  let method = str(get(rpc, "method", ""));
+
+  // ---- message/stream ----
+  if (method == "message/stream" or method == "message/streaming") {
+    let params = get(rpc, "params", {});
+    let question = a2a.message_text(params);
+    if (len(question) == 0) {
+      return { jsonrpc: "2.0", id: mid,
+               error: { code: -32602, message: "params.message.parts 里没有 text" } };
+    }
+    let ctx = str(get(params, "contextId", ""));
+    if (len(ctx) == 0) { ctx = peer.new_message_id(); }
+    let tid = peer.new_task_id();
+
+    let events = [];
+    push(events, stringify({ jsonrpc: "2.0", id: mid,
+      result: { taskId: tid, contextId: ctx, kind: "status-update",
+                status: { state: "working", timestamp: str(now()) }, "final": false } }));
+
+    let answer = answer_with_agent_or_tools(question, ctx);
+    if (answer == null) {
+      push(events, stringify({ jsonrpc: "2.0", id: mid,
+        result: { taskId: tid, contextId: ctx, kind: "status-update",
+                  status: { state: "input-required", timestamp: str(now()),
+                            message: { role: "agent", parts: [{ kind: "text",
+                              text: "我可以回答最新交易日/覆盖股票数、信号共振榜、选股清单。" }] } },
+                  "final": true } }));
+      return { sse: events };
+    }
+    push(events, stringify({ jsonrpc: "2.0", id: mid,
+      result: { taskId: tid, contextId: ctx, kind: "artifact-update",
+                artifact: { artifactId: peer.new_message_id(),
+                            parts: [{ kind: "text", text: answer }] },
+                append: false, lastChunk: true } }));
+    push(events, stringify({ jsonrpc: "2.0", id: mid,
+      result: { taskId: tid, contextId: ctx, kind: "status-update",
+                status: { state: "completed", timestamp: str(now()) }, "final": true } }));
+    return { sse: events };
+  }
+
+  if (method == "message/send" or method == "tasks/send") {
+    let params = get(rpc, "params", {});
+    let question = a2a.message_text(params);
+    if (len(question) == 0) {
+      return { jsonrpc: "2.0", id: mid,
+               error: { code: -32602, message: "params.message.parts 里没有 text" } };
+    }
+    let ctx = str(get(params, "contextId", ""));
+    if (len(ctx) == 0) { ctx = str(get(get(params, "message", {}), "contextId", "")); }
+    if (len(ctx) == 0) { ctx = peer.new_message_id(); }
+
+    let resume_id = str(get(params, "id", ""));
+    if (len(resume_id) == 0) { resume_id = str(get(get(params, "message", {}), "taskId", "")); }
+    if (len(resume_id) > 0) {
+      let existing = tasks.load(resume_id);
+      if (existing == null) {
+        return { jsonrpc: "2.0", id: mid,
+                 error: { code: -32001, message: "task not found: " + resume_id } };
+      }
+      let est = str(get(get(existing, "status", {}), "state", ""));
+      if (est == "completed" or est == "failed" or est == "canceled" or est == "rejected") {
+        return { jsonrpc: "2.0", id: mid,
+                 error: { code: -32004,
+                          message: "任务已终结(" + est + "), 不可恢复; 请在同一 contextId 下发起新任务" } };
+      }
+      tasks.append_message(resume_id, "user", question);
+      let ans2 = answer_with_agent_or_tools(question, resume_id);
+      if (ans2 == null) {
+        let t2 = tasks.transition_msg(resume_id, "input-required", get(existing, "artifacts", []),
+                                      "没认出问题类型。可以问: 最新交易日 / 信号共振 / 选股清单。");
+        return { jsonrpc: "2.0", id: mid, result: t2 };
+      }
+      let t3 = tasks.transition_msg(resume_id, "completed",
+                                    [a2a.text_artifact(resume_id, ans2)], "");
+      return { jsonrpc: "2.0", id: mid, result: t3 };
+    }
+
+    let tid = peer.new_task_id();
+    let cfg = get(params, "configuration", {});
+    let want_async = get(cfg, "async", false) == true;
+
+    if (want_async) {
+      // 异步: 只落 submitted, 由宿主 worker 推进(见 crm 里同款注释)。
+      let pl = get(params, "payload", null);
+      if (pl == null) { pl = { kind: "scanner_inline", question: question }; }
+      let created = tasks.create(tid, ctx, pl);
+      return { jsonrpc: "2.0", id: mid, result: created };
+    }
+
+    let answer = answer_with_agent_or_tools(question, ctx);
+    if (answer == null) {
+      return { jsonrpc: "2.0", id: mid, result: a2a.task(tid, ctx, "input-required", [
+        a2a.text_artifact(tid, "我可以回答: 最新交易日/覆盖股票数(scanner.meta)、信号共振榜(scanner.signals)、选股清单(scanner.picks)。")]) };
+    }
+    return { jsonrpc: "2.0", id: mid,
+             result: a2a.task(tid, ctx, "completed", [a2a.text_artifact(tid, answer)]) };
+  }
+
+  if (method == "tasks/get" or method == "GetTask") {
+    let params = get(rpc, "params", {});
+    let tid = str(get(params, "id", ""));
+    if (len(tid) == 0) {
+      return { jsonrpc: "2.0", id: mid, error: { code: -32602, message: "params.id 必填" } };
+    }
+    let t = tasks.load(tid);
+    if (t == null) {
+      return { jsonrpc: "2.0", id: mid,
+               error: { code: -32001, message: "task not found: " + tid } };
+    }
+    return { jsonrpc: "2.0", id: mid, result: t };
+  }
+
+  if (method == "tasks/cancel" or method == "CancelTask") {
+    let params = get(rpc, "params", {});
+    let tid = str(get(params, "id", ""));
+    let t = tasks.load(tid);
+    if (t == null) {
+      return { jsonrpc: "2.0", id: mid,
+               error: { code: -32001, message: "task not found: " + tid } };
+    }
+    let st = str(get(get(t, "status", {}), "state", ""));
+    if (st == "completed" or st == "failed" or st == "canceled") {
+      return { jsonrpc: "2.0", id: mid,
+               error: { code: -32002, message: "task not cancelable (state=" + st + ")" } };
+    }
+    let c = tasks.transition(tid, "canceled", get(t, "artifacts", []));
+    return { jsonrpc: "2.0", id: mid, result: c };
+  }
+
+  return { jsonrpc: "2.0", id: mid,
+           error: { code: -32601, message: "method not found: " + method } };
+};
+
+// 先试**关键词匹配**(毫秒级), 认不出才问 agent(数秒到数十秒)。
+//
+// 为什么是这个顺序, 不是反过来:
+//   * 关键词命中时, agent 只是把同一份数据换个说法, 多花 20-30 秒没有收益;
+//   * message/stream 承诺"流式", 若第一个事件要等 30 秒才出, 客户端会先超时 ——
+//     实测探针 20s 超时, 而 agent 路径要 29s。
+//   * 认不出时再委派, 这是 agent 真正有价值的场景(需要判断, 不是取数)。
+//
+// 代价: agent 的"分析意见"能力不会被自动触发。要它必须显式走 /peer/ask ——
+// 那条路径本来就是给"要判断"的场景用的, 语义更清楚。
+func answer_with_agent_or_tools(q: string, ctx: string) {
+  let fast = answer_question(q);
+  if (fast != null) { return fast; }
+  let ap = agent.ping();
+  if (get(ap, "ok", false)) {
+    let a = agent.ask(q, ctx);
+    if (get(a, "ok", false)) {
+      let ans = str(get(a, "answer", ""));
+      if (len(ans) > 0) { return ans; }
+    }
+  }
+  return null;
+}
+
+func answer_question(q: string) {
+  if (len(str_match("信号|共振|金叉|超卖|signal", q)) > 0) {
+    let r = repo.signals_payload(10, 2);
+    let n = int(get(r, "count", 0));
+    let tot = int(get(r, "total", 0));
+    return "最近交易日 " + str(get(r, "date", "?")) + "，共振≥2 的标的 "
+         + str(n) + " 只（全市场命中 " + str(tot) + " 只）。";
+  }
+  if (len(str_match("选股|清单|picks", q)) > 0) {
+    let p = repo.picks_payload();
+    let arr = get(p, "picks", []);
+    return "扫描器选出 " + str(len(arr)) + " 只标的。";
+  }
+  if (len(str_match("交易日|股票|覆盖|数据|meta", q)) > 0) {
+    let m = repo.meta_payload();
+    return "最新交易日 " + str(get(m, "latest_date", "?"))
+         + "，覆盖 " + str(int(get(m, "stocks", 0))) + " 只股票"
+         + "，分析行数 " + str(int(get(m, "analysis_rows", 0))) + "。";
+  }
+  return null;
+};
+
+// 注册窗口关闭, 开始伺服。没有这行 route 表不会生效, 进程静默退出(rc=0),
+// 看起来像"启动了但连不上"—— 排查时最容易卡在这里。
+run();

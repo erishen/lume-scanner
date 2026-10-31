@@ -12,3 +12,12 @@ logs/
 
 # Lume 服务启动时 llm-router 自动生成
 skills/
+
+# ---- 运行时产物 (make peer-up / agent 启动时生成) ----
+# 不加这些规则时, 每跑一次 peer 就有一批未跟踪文件进 git status;
+# 一次 `git add .` 就会把本机 pid、日志、临时脚本带进公开仓。
+# .runtime/ 里还有 MCP 同步产物和会话数据, 体积也可能很大。
+.runtime/
+.runtime-*.pid
+*_tmp.lume
+*_tmp.py

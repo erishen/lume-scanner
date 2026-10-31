@@ -77,3 +77,59 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+
+  # ---- peer 节点(局域网互通) ----
+  # 独立容器: peer 是另一个 server{}(不同端口、不同信任边界)。
+  #
+  # 是否启动由 **.env 决定**, 不需要记命令行参数:
+  #   .env 里写  COMPOSE_PROFILES=peer   → docker compose up -d 会起它
+  #   .env 里不写这个变量               → 只起主服务(默认形态)
+  #
+  # 用 COMPOSE_PROFILES 而不是"服务总在 + 靠 env 判空": compose 没有条件
+  # 启动语法, 硬做只能让容器起来再自己退出, 配合 restart: unless-stopped
+  # 会变成反复重启 —— 比不起更糟。
+  peer:
+    profiles: ["peer"]
+    image: erishen/lume-scanner
+    container_name: lume-scanner-peer
+    build: .
+    restart: unless-stopped
+    # 不发布到宿主: peer 面只给**其它 lume 应用**调用(见 lume-peer-net),
+    # 不是给人用浏览器打开的 —— 一个端口两种语义必然混淆, 实际踩过。
+    expose:
+      - "18103"
+    volumes:
+      # 与主服务同一份行情库, 只读 —— peer 面不开写, 也不该触发重算。
+      - ${STOCKANALYZER_DATA:-.data}:/app/data:ro
+      # 节点注册表(热改不用重启)。挂在 .data 之外: 这里 .data 并未整卷
+      # 只读挂载, 但仍分开, 免得 peer 面的白名单和业务数据混在一起。
+      - ./.data/peers-identity.json:/app/peer-identity/peers-identity.json:ro
+    environment:
+      # 必须 0.0.0.0: Docker 端口转发从容器 eth0 进来, 绑回环会让 -p 失效。
+      LUME_BIND: "0.0.0.0"
+      PEER_NAME: "${PEER_NAME:-scanner}"
+      PEER_PORT: "18103"
+      PEER_SHARED: "${PEER_SHARED:?peer 已默认开启, 请在 .env 配 PEER_SHARED(与访问方一致); 不想开就注释掉 COMPOSE_PROFILES=peer}"
+      PEER_ROOT: "${PEER_ROOT:-}"
+      PEER_SITE_NAME: "lume-scanner"
+      PEER_REGISTRY: "/app/peer-identity/peers-identity.json"
+      # 行情库位置(与主服务一致)
+      SCANNER_DB: /app/data/stock_analysis.db
+      ASSET_DB: /app/data/asset_snapshot.db
+      # 关掉 MCP 加载: peer 只用 repo.* 的只读查询, 不碰 MCP;
+      # 而镜像里的 mcp-servers 靠 npx 启, 容器内没有 node, 会刷握手失败。噪音。
+      MCP_ALLOW: "__none__"
+    command: ["/usr/local/bin/lume", "peer_node.lume"]
+    # 全用 map 形式: list 形式与本段的 map 键混用会让 YAML 解析器报错。
+    networks:
+      default: {}
+      # 带别名: 各应用的服务名都叫 "peer", 共享网里必须唯一(DNS 重名只会
+      # 解析到其中一个, 访问谁全看运气)。看板按 "scanner-peer" 连接。
+      lume-peer-net:
+        aliases:
+          - scanner-peer
+
+networks:
+  # 预先创建一次: docker network create lume-peer-net
+  lume-peer-net:
+    external: true
