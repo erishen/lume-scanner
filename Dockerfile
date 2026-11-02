@@ -11,7 +11,7 @@
 #   - compose 用 bind mount 把宿主 stock-analyzer 真实 data/ 挂进 /app/.data,
 #     并以 SCANNER_DB/ASSET_DB 指向只读挂载的 8.5M 行全量库 (镜像不含数据)。
 # ============================================================================
-FROM erishen/lume-scanner-base
+FROM erishen/lume-scanner-base:latest
 
 WORKDIR /app
 # scanner.lume 相对 CWD=/app 解析: import "src/repo.lume" + docroot "./www"。
@@ -21,9 +21,35 @@ COPY www/ ./www/
 # peer 节点: 让扫描结果能被其它 lume 应用(如 lume-lan"应用互访")查询。
 # 与 scanner.lume 各自一个 server{}, 主服务不用改。
 COPY peer_node.lume ./
-# lume-core 的 peer 模块: peer_node.lume 里 import "../lume-core/lib/peer.lume",
-# 从 /app 解析就是 /lume-core/lib/。构建上下文没有它, make docker-build 先同步。
-COPY .runtime/lume-core/lib/ /lume-core/lib/
+# ── lume-core/lib: 按版本从 release 取 ─────────────────────────────────
+# peer_node.lume 里写 import "../lume-core/lib/peer.lume", 从 /app 解析就是
+# /lume-core/lib/。这些是 **.lume 源码**(运行时读盘), 不编进二进制。
+# 以前从 ../lume-core/lib 复制进 .runtime/ 再 COPY —— 那份副本无版本标记,
+# 会静默停在旧版(镜像里 13KB 的 peer.lume / 源码 17KB), 症状只是
+# "module 'peer' has no export 'config_warnings'", 指不到旧文件。
+ARG LUME_CORE_VERSION=v0.12.1
+ARG LUME_CORE_REPO=erishen/lume-core
+ARG TARGETARCH
+# base 镜像已经 USER 10001, 非 root 建不了 /lume-core。
+# 临时切回 root 只做这一层(下载+落盘), 下一行立刻回到 10001 ——
+# 最终容器的运行身份不变。
+USER root
+RUN set -eux; \
+    case "${TARGETARCH:-arm64}" in \
+      amd64) carch=x64 ;; \
+      arm64) carch=arm64 ;; \
+      *) echo "unsupported TARGETARCH='${TARGETARCH}'" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/${LUME_CORE_REPO}/releases/download/${LUME_CORE_VERSION}"; \
+    asset="lume-core-linux-${carch}"; \
+    curl -fsSL --retry 3 --retry-delay 2 -o /tmp/core.tar.gz "${base}/${asset}.tar.gz"; \
+    curl -fsSL --retry 3 -o /tmp/core.sha256 "${base}/${asset}.sha256"; \
+    (cd /tmp && sed "s|${asset}.tar.gz|core.tar.gz|" core.sha256 | sha256sum -c -); \
+    mkdir -p /tmp/core && tar -xzf /tmp/core.tar.gz -C /tmp/core; \
+    mkdir -p /lume-core; \
+    cp -r "/tmp/core/${asset}/lib" /lume-core/lib; \
+    test -f /lume-core/lib/peer.lume; \
+    rm -rf /tmp/core /tmp/core.tar.gz /tmp/core.sha256
 # 样例库 fallback (compose 挂真实库时这些被 SCANNER_DB/ASSET_DB 覆盖)
 COPY .data/ ./.data/
 

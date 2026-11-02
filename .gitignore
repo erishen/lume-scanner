@@ -21,3 +21,9 @@ skills/
 .runtime-*.pid
 *_tmp.lume
 *_tmp.py
+
+# 手工备份(改 peer_node / repo 前留的副本)。
+# 回滚交给 git 历史就够了 —— 两份同构文件必然分叉, 而分叉的表现是
+# "改了 A 没改 B", 这个项目已经踩过(镜像里 13KB 的旧 peer.lume)。
+*.bak-*
+*.bak
