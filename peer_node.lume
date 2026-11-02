@@ -238,6 +238,15 @@ post "/peer/invoke", (req) => {
              result: repo.picks_payload() };
   }
 
+  // 行情快照: 只给数字, 不给"哪些值得看"的判断。
+  // 上层要用它算行业均值, 混进选股结论会污染统计。
+  if (tool_name == "sector.snapshot") {
+    let args = get(parsed.ok, "arguments", {});
+    let codes_csv = str(get(args, "codes", ""));
+    return { ok: true, node: peer.node_info()["name"], "tool": tool_name,
+             result: repo.snapshot_payload(codes_csv) };
+  }
+
   return { ok: false, "tool": tool_name,
            error: "unknown tool '" + tool_name +
                   "' (whitelist: scanner.meta, scanner.signals, scanner.picks)" };

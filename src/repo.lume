@@ -1112,3 +1112,47 @@ tool "paper_portfolio", "查模拟仓: 当前持仓(成本/现价/浮动盈亏/�
 tool "data_freshness", "查数据新鲜度: K线最新交易日/资产快照 updated_at/模拟仓 updated_at, 用于回答「数据是不是最新的」「哪份数据停了」。", {}, (arg) => {
   return freshness_payload();
 };
+
+// ── 全市场当日快照(行情数字) ────────────────────────────────────────
+//
+// 为什么单独一个能力: 上层要算"行业级动向", 需要一批标的的当日
+// 涨跌幅/动量/波动率, 但**不需要也不该拿到选股结论**。
+// 之前只有 signals / picks —— 那两个都带"哪些值得看"的判断,
+// 拿来算行业均值会把判断混进统计里。
+//
+// 返回体只含行情字段, 不含任何 buy/sell/评分排序:
+//   调用方自己做聚合, 本节点不代替它下结论。
+export func snapshot_payload(codes_csv: string) {
+  let db = db_scan();
+  let d = sql_query(db, "select max(date) as latest from stock_analysis");
+  if (len(d) == 0) { return { ok: false, error: "无分析数据", rows: [] }; }
+  let latest = str(get(d[0], "latest", ""));
+  // 不传 codes 时返回全市场(供上层按需筛选); 传了就只取这些。
+  let where = "where date = ?";
+  let params = [latest];
+  let list = [];
+  let raw = codes_csv;
+  if (len(raw) > 0) {
+    let parts = split(raw, ",");
+    let i = 0;
+    let ph = [];
+    while (i < len(parts)) {
+      let c = str(get(parts, i, ""));
+      if (len(c) > 0) {
+        push(list, c);
+        push(ph, "?");
+      }
+      i = i + 1;
+    }
+    if (len(list) > 0) {
+      where = where + " and code in (" + join(ph, ",") + ")";
+      params = [latest];
+      let j = 0;
+      while (j < len(list)) { push(params, get(list, j, "")); j = j + 1; }
+    }
+  }
+  let rows = sql_query(db,
+    "select code, close, change_percent, volatility_20d, momentum_5d, " +
+    "turnover_rate from stock_analysis " + where, params);
+  return { ok: true, date: latest, rows: rows, count: len(rows) };
+}
