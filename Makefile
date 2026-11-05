@@ -34,6 +34,7 @@ default: dev
 
 # ── vendor: 让项目自带解释器 + lume-core 库, 不再依赖兄弟 checkout ──
 # 已在场且能 check 就跳过, 缺失/不匹配才重新拉。bin/ 不入库、lib/ 入库。
+.PHONY: vendor bootstrap
 vendor:
 	@bash scripts/vendor_lume.sh --check >/dev/null 2>&1 \
 		|| bash scripts/vendor_lume.sh
