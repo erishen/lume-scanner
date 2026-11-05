@@ -27,3 +27,9 @@ skills/
 # "改了 A 没改 B", 这个项目已经踩过(镜像里 13KB 的旧 peer.lume)。
 *.bak-*
 *.bak
+
+# vendor/lume-core/: 由 make vendor / make bootstrap 填充(见 scripts/vendor_lume.sh)。
+#   lib/*.lume  入库 —— 解释器按路径读的 .lume 源码, 必须随仓走, 单独 clone 才能 import。
+#   bin/lume-core 不入库 —— 二进制体积大、无法 code review; 由 vendor 目标按需拉取。
+#   .vendor-stamp 入库 —— 记录这份 vendor 来自哪个版本(bin 版本 + lib tag), 可查可复核。
+vendor/lume/bin/

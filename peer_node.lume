@@ -18,7 +18,7 @@
 // * 行情数据本身不是个人数据, 但**完整性**重要: 这里只暴露已经落库的结果,
 //   不触发重算(重算要跑 ETL, 属于扫描器自己的调度)。
 // * 签名/防重放/明文传输的约束见 lume-core/lib/peer.lume 文件头。
-import "../lume-core/lib/peer.lume" as peer;
+import "vendor/lume-core/lib/peer.lume" as peer;
 import "src/repo.lume" as repo;
 import "src/peer/agent.lume" as agent;
 import "src/a2a.lume" as a2a;

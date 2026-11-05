@@ -1,0 +1,4 @@
+source=local-checkout(bin symlink → /Users/erishen/Workspace/CNB/individular-invest/work/lume/lume-scanner/../lume-core/bin/lume-core)
+lib_tag=v0.13.0(pinned, 从 git show 取)
+bin=lume-core 0.13.0
+lib_files=10

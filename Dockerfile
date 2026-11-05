@@ -21,16 +21,17 @@ COPY www/ ./www/
 # peer 节点: 让扫描结果能被其它 lume 应用(如 lume-lan"应用互访")查询。
 # 与 scanner.lume 各自一个 server{}, 主服务不用改。
 COPY peer_node.lume ./
-# ── lume-core/lib: 按版本从 release 取 ─────────────────────────────────
-# peer_node.lume 里写 import "../lume-core/lib/peer.lume", 从 /app 解析就是
-# /lume-core/lib/。这些是 **.lume 源码**(运行时读盘), 不编进二进制。
+# ── lume-core/lib: 按版本从 release 取, 落点与源码 import 对齐 ─────────────
+# peer_node.lume 里写 import "vendor/lume-core/lib/peer.lume", 从 /app 解析就是
+# /app/vendor/lume-core/lib/。这些是 **.lume 源码**(运行时读盘), 不编进二进制。
 # 以前从 ../lume-core/lib 复制进 .runtime/ 再 COPY —— 那份副本无版本标记,
 # 会静默停在旧版(镜像里 13KB 的 peer.lume / 源码 17KB), 症状只是
 # "module 'peer' has no export 'config_warnings'", 指不到旧文件。
+# 版本保持 v0.12.1(与容器内二进制同代), 路径随源码 import 挪到 /app/vendor/lume-core。
 ARG LUME_CORE_VERSION=v0.12.1
 ARG LUME_CORE_REPO=erishen/lume-core
 ARG TARGETARCH
-# base 镜像已经 USER 10001, 非 root 建不了 /lume-core。
+# base 镜像已经 USER 10001, 非 root 建不了 /app/vendor。
 # 临时切回 root 只做这一层(下载+落盘), 下一行立刻回到 10001 ——
 # 最终容器的运行身份不变。
 USER root
@@ -46,9 +47,9 @@ RUN set -eux; \
     curl -fsSL --retry 3 -o /tmp/core.sha256 "${base}/${asset}.sha256"; \
     (cd /tmp && sed "s|${asset}.tar.gz|core.tar.gz|" core.sha256 | sha256sum -c -); \
     mkdir -p /tmp/core && tar -xzf /tmp/core.tar.gz -C /tmp/core; \
-    mkdir -p /lume-core; \
-    cp -r "/tmp/core/${asset}/lib" /lume-core/lib; \
-    test -f /lume-core/lib/peer.lume; \
+    mkdir -p /app/vendor/lume-core; \
+    cp -r "/tmp/core/${asset}/lib" /app/vendor/lume-core/lib; \
+    test -f /app/vendor/lume-core/lib/peer.lume; \
     rm -rf /tmp/core /tmp/core.tar.gz /tmp/core.sha256
 # 样例库 fallback (compose 挂真实库时这些被 SCANNER_DB/ASSET_DB 覆盖)
 COPY .data/ ./.data/

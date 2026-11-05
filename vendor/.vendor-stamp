@@ -1,0 +1,4 @@
+source=local-checkout
+bin=lume 0.12.2
+lib=working-tree
+lib_files=10

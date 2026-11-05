@@ -18,10 +18,10 @@
 # 生产数据源: 不用样例库时,设 SCANNER_DB / ASSET_DB 指向真实 stock-analyzer data/ 双库
 #   SCANNER_DB=/path/stock_analysis.db ASSET_DB=/path/asset_snapshot.db make dev
 
-# 默认用邻居宿主树的本地构建(含 #54 序列指标内建; 安装件 ~/.local/bin/lume
-# 是 0.8.1 老版, 没有 kdj/atr/obv 等, 用它 check 会报 undefined variable)。
-# 想用安装件可 LUME=~/.local/bin/lume make dev(需先把宿主树 make 后重装)。
-LUME   ?= $(CURDIR)/../lume/bin/lume
+# 运行时二进制 + lume-core 库都来自仓内 vendor/lume-core/(可复现、单独 clone 直接可跑),
+# 不再依赖兄弟 checkout 的 ../lume。make bootstrap 可刷新到 pinned 版本。
+# 想用宿主树更新的版本: LUME=../lume-core/bin/lume-core make dev(但库要一致)。
+LUME   ?= vendor/lume/bin/lume
 PORT   ?= 8094
 PY     ?= /usr/bin/python3
 
@@ -31,6 +31,16 @@ ESBUILD := $(shell command -v esbuild 2>/dev/null || echo ../lume/frontend/node_
 STOCKANALYZER ?= ../../../invest-kit/apps/stock-analyzer/data
 
 default: dev
+
+# ── vendor: 让项目自带解释器 + lume-core 库, 不再依赖兄弟 checkout ──
+# 已在场且能 check 就跳过, 缺失/不匹配才重新拉。bin/ 不入库、lib/ 入库。
+vendor:
+	@bash scripts/vendor_lume.sh --check >/dev/null 2>&1 \
+		|| bash scripts/vendor_lume.sh
+
+# 强制刷新(本地 checkout 改了、或想钉到另一个 pinned release 时用):
+bootstrap:
+	@bash scripts/vendor_lume.sh
 
 # 停掉 PORT 上的旧服务 + 残留 esbuild watch
 stop:
@@ -58,7 +68,7 @@ privacy:
 test:
 	@$(PY) -m unittest discover -s tests -v
 
-check:
+check: vendor
 	@$(LUME) --check scanner.lume
 
 # TypeScript 全量类型检查(esbuild 只剥类型不查错)。首次可能冷启 node_modules。
