@@ -20,6 +20,15 @@
 #
 # ⚠️ 二进制必须是 **framework**(../lume/bin/lume), 不是语言核心(../lume-core/bin/lume-core):
 # 业务内建(rsi_cutler / any / agent 框架)只在 framework 里, 拿语言核心 check 会漏报。
+#
+# ══ 验证状态(写进脚本, 免得下次误以为"全验过")══════════════════════
+#   本地分支(软链 ../lume/bin/lume): 已验 —— 5 家各自入口 --check 全 parse OK,
+#     framework 0.12.2 + 工作树/同代 lib。
+#   release 分支(curl GitHub): **未实跑**(沙箱默认断网, HTTP 000)。但资产命名
+#     与两个【已验证】来源对齐: framework = lume-<os>-<arch>-static.tar.gz、
+#     core = lume-core-<os>-<arch>.tar.gz —— 与各项目 Dockerfile 和
+#     lume-lan/scripts/fetch_lume_vendor.sh 同款。单独 clone 前建议先实跑一次
+#     make bootstrap 确认。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
