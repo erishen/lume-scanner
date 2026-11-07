@@ -259,7 +259,6 @@ dev: stop check sample-data
 # 或换了端口, 看板那边不知道, 也不会重启它。
 #
 # 端口约定(改这里要同时改 lume-lan/.env 的 PEER_TARGETS):
-#   lume-blog    → 18321
 #   lume-crm     → 18102
 #   lume-scanner → 18103
 PEER_PORT_RUN ?= 18103
