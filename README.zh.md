@@ -134,6 +134,9 @@ stock-analyzer ETL(宿主 launchd 每日 18:30, 增量拉 K 线→算 51 指标�
 - 市场数据来自公开行情源, 仅供研究用途, 版权归原作者所有。
 - 历史表现不代表未来结果。
 
+## 相关文章
+- [用 Lume 构建 A 股全市场扫描服务：单二进制架构与量化指标交叉验证](https://erishen.cn/lume_scanner/)
+
 ## License
 
 MIT

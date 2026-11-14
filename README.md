@@ -183,6 +183,9 @@ repository, so reporting them would only bury the real hits.
 `make test` covers the scan *scope*, not just the rules — if someone narrows it
 back to tracked files only, the test goes red.
 
+## Related Articles
+- [Building an A-share Full-Market Scanner with Lume: Single-Binary Architecture and Quantitative Indicator Cross-Validation](https://erishen.cn/lume_scanner-en/)
+
 ## License
 
 MIT
