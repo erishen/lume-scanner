@@ -10,10 +10,13 @@
 两边的允许清单各自维护: 各仓库的示例网段选择可能不同, 共用一份会
 要么误报、要么放过。
 
-两类规则:
+三类规则:
   1) 硬规则(默认, 必须过): 私有网段、公网 IP、真实 MAC 等**格式**类命中。
      这些在文档/示例里应统一用保留地址(192.168.1.0/24、aa:bb:cc:..)。
-  2) 本机实况(可选, --local): 拿 .data/ 或本机配置 里**本机真实**的
+  2) 本机/私有身份(默认, 必须过): 构建机家目录绝对路径(/Users/<user>、
+     C:\\Users\\<user>)、本机账号、私有工作区/仓库名。这些会被 git add
+     带进公开仓库, 且 `strings`/只看源码都容易漏。
+  3) 本机实况(可选, --local): 拿 .data/ 或本机配置 里**本机真实**的
      网段/网关/主机 IP/MAC 去比, 命中即判泄漏。这是本机私有数据, 只在本地跑得出来。
      没有该数据时这项自动跳过, 不报错。
 
@@ -77,10 +80,22 @@ ALLOWED_MACS = {
 RE_IPV4 = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
 RE_MAC = re.compile(r"\b([0-9a-fA-F]{1,2})(?::[0-9a-fA-F]{1,2}){5}\b")
 
-# 二进制/生成物不扫
+# 二进制/生成物不扫；符号链接不读（可能指向仓库外的构建机路径）。
+# vendor/ 下的文本要扫 —— .vendor-stamp 就曾把构建机绝对路径带进公开仓库；
+# 二进制靠下面的 NUL 字节检测跳过，不能靠目录名一刀切。
 SKIP_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2",
                ".ttf", ".gz", ".zip", ".tar", ".bin")
-SKIP_DIRS = ("node_modules/", "vendor/", ".data/", ".runtime/", ".git/")
+SKIP_DIRS = ("node_modules/", ".data/", ".runtime/", ".git/")
+
+# 本机/私有身份标识。拼出来而不是写字面量：本脚本自己也会被扫，
+# 写完整串会让它成为自己的泄露源（与 tests 里的构造写法同理）。
+HOME_PREFIX = "/" + "Users" + "/"
+WIN_HOME_PREFIX = "C:" + "\\" + "Users" + "\\"
+LOCAL_HOME_UNIX = "/home/" + "erishen"
+PRIVATE_WORKSPACE = "Workspace" + "/" + "CNB"
+PRIVATE_MONOREPO = "individ" + "ular-invest"
+RE_HOME = re.compile(re.escape(HOME_PREFIX) + r"[A-Za-z0-9._-]+")
+RE_WIN_HOME = re.compile(re.escape(WIN_HOME_PREFIX) + r"[A-Za-z0-9._-]+")
 
 
 def is_private(ip: str) -> bool:
@@ -182,10 +197,16 @@ def main(argv):
     problems = []
     for rel in tracked_files(staged, include_untracked):
         path = os.path.join(ROOT, rel)
+        if os.path.islink(path):
+            continue
         try:
-            text = open(path, encoding="utf-8", errors="replace").read()
+            with open(path, "rb") as f:
+                raw = f.read()
         except OSError:
             continue
+        if b"\x00" in raw:      # 二进制产物靠这个跳过，不按目录名猜
+            continue
+        text = raw.decode("utf-8", errors="replace")
         for no, line in enumerate(text.splitlines(), 1):
             # --- IP ---
             for m in RE_IPV4.finditer(line):
@@ -216,6 +237,21 @@ def main(argv):
                 elif norm not in ALLOWED_MACS:
                     problems.append((rel, no, f"非示例 MAC: {norm}"))
 
+            # --- 构建机路径 / 私有身份 ---
+            for label, pattern in (
+                ("家目录绝对路径", RE_HOME),
+                ("Windows 家目录路径", RE_WIN_HOME),
+            ):
+                for m in pattern.finditer(line):
+                    problems.append((rel, no, f"{label}: {m.group(0)}"))
+            for label, needle in (
+                ("本机家目录路径", LOCAL_HOME_UNIX),
+                ("私有工作区名", PRIVATE_WORKSPACE),
+                ("私有仓库名", PRIVATE_MONOREPO),
+            ):
+                if needle in line:
+                    problems.append((rel, no, f"{label}: {needle}"))
+
     if not problems:
         if staged:
             scope = "暂存区"
@@ -232,12 +268,12 @@ def main(argv):
         print(f"✓ 隐私检查通过（{scope}{extra}）")
         return 0
 
-    print("✗ 发现疑似真实局域网标识（仓库公开，请改用 192.168.1.x / aa:bb:cc:.. 等示例值）:",
-          file=sys.stderr)
+    print("✗ 发现疑似隐私信息（真实网段/IP、家目录路径或私有仓库名；仓库公开，"
+          "请改用 192.168.1.x / aa:bb:cc:.. / /Users/<user> 等占位）:", file=sys.stderr)
     for rel, no, msg in problems:
         print(f"  {rel}:{no}  {msg}", file=sys.stderr)
-    print(f"\n共 {len(problems)} 处。若确属示例，请改用保留地址；"
-          f"确需放行的例外请加到 ALLOWED_SUBNETS / ALLOWED_MACS。", file=sys.stderr)
+    print(f"\n共 {len(problems)} 处。若确属示例，请改用保留地址/占位路径；"
+          f"确需放行的例外请加到 ALLOWED_* 或对应白名单。", file=sys.stderr)
     return 1
 
 

@@ -21,6 +21,14 @@ SCRIPT = os.path.join(ROOT, "scripts", "check_privacy.py")
 # 泄露源 —— 测试污染自己的输入。
 _LEAK_IP = "192.168" + ".9.77"
 LEAK_LINE = "HOST=" + _LEAK_IP + "\n"
+# 同样拼出来：本文件也会被脚本扫，写完整串会污染自己的输入。
+_LEAK_USER = "erishen"
+LEAK_HOME_PATH = "/" + "Users" + "/" + _LEAK_USER + "/repo"
+LEAK_WIN_PATH = "C:" + "\\" + "Users" + "\\" + _LEAK_USER + "\\repo"
+LEAK_WS = "Workspace" + "/" + "CNB"
+LEAK_REPO = "individ" + "ular-invest"
+NEUTRAL_HOME = "/" + "home" + "/builder"
+PLACEHOLDER_HOME = "/" + "Users" + "/<user>"
 
 
 class ScanScopeTest(unittest.TestCase):
@@ -100,6 +108,36 @@ class ScanScopeTest(unittest.TestCase):
         self._commit("doc.md", "示例: make peer-probe PEER_HOST=192.168.1.20:18088\n")
         rc, out = self._scan()
         self.assertEqual(rc, 0, f"示例网段被误报:\n{out}")
+
+    def test_home_path_in_tracked_file_is_reported(self):
+        """构建机家目录路径必须拦下 —— 这正是 .vendor-stamp 踩过的坑。"""
+        self._commit("doc.md", "构建目录: " + LEAK_HOME_PATH + "\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 1, f"家目录路径没被拦下:\n{out}")
+        self.assertIn("doc.md", out)
+        self.assertIn("家目录绝对路径", out)
+
+    def test_vendor_text_file_is_scanned(self):
+        """vendor/ 不能一刀切跳过：文本 stamp 也会带路径。"""
+        self._commit("vendor/lume-core/.vendor-stamp",
+                     "source=local-checkout(" + LEAK_HOME_PATH + ")\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 1, f"vendor 下的文本没被扫到:\n{out}")
+        self.assertIn(".vendor-stamp", out)
+
+    def test_win_path_and_private_names_reported(self):
+        """Windows 家目录路径、私有工作区/仓库名都要报。"""
+        self._commit("doc.md", LEAK_WIN_PATH + " " + LEAK_WS + " " + LEAK_REPO + "\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 1, f"私有身份标识没被拦下:\n{out}")
+        for label in ("Windows 家目录路径", "私有工作区名", "私有仓库名"):
+            self.assertIn(label, out)
+
+    def test_neutral_and_placeholder_paths_allowed(self):
+        """中性目录(/home/builder)和占位写法(/Users/<user>)不能误报。"""
+        self._commit("doc.md", NEUTRAL_HOME + " " + PLACEHOLDER_HOME + "\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 0, f"中性/占位路径被误报:\n{out}")
 
     def test_scope_message_reflects_coverage(self):
         """通过时要说清扫了什么，否则看不出覆盖范围。"""
