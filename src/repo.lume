@@ -330,9 +330,14 @@ export func picks_payload() {
       if (len(c) == 8) { push(codes, substr(c, 2)); }
       i = i + 1;
     }
-    let met = sql_query(db,
-      "select code, volume_ratio, total_market_value from asset_snapshot where code in ('" +
-      join(codes, "', '") + "')", []);
+    // 参数绑定(与 names_map 同): codes 来自库内信号, 仍不拼进 SQL 字符串 ——
+    // 哪天数据来源变了也不会开出注入面。
+    let marks = [];
+    let j = 0;
+    while (j < len(codes)) { push(marks, "?"); j = j + 1; }
+    let met = len(marks) == 0 ? [] : sql_query(db,
+      "select code, volume_ratio, total_market_value from asset_snapshot where code in (" +
+      join(marks, ",") + ")", codes);
     let metmap = {};
     i = 0;
     while (i < len(met)) {
