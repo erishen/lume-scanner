@@ -21,14 +21,12 @@ let agent_timeout = env("AGENT_TIMEOUT");
 if (agent_timeout == null) { agent_timeout = "90"; }
 let agent_tool_timeout = env("AGENT_TOOL_TIMEOUT");
 if (agent_tool_timeout == null) { agent_tool_timeout = "300"; }
-// agent-httpd 开 Basic Auth(-a htpasswd)后, 本机调用方也要带凭据。
-// 只从 env 读, 不写死在仓库里; 两者都配才发送 Authorization 头。
-let agent_user = env("AGENT_USER");
-let agent_password = env("AGENT_PASSWORD");
-let agent_auth = "";
-if (agent_user != null and agent_password != null) {
-  agent_auth = "Basic " + base64_encode(agent_user + ":" + agent_password);
-}
+// agent-httpd 开 Basic Auth(-a htpasswd)后, 本机调用方也要带同一组凭据。
+// ⚠️ Lume 的 env() 对名字含 PASSWORD/SECRET/TOKEN 等词的变量脱敏成 null
+// (见 lang/builtins_fs.c:env_is_sensitive), 所以这里读**现成的 Authorization
+// 头值**, 由 .env 在 shell 侧组装后透传; 脚本内不拼密码、不写死凭据。
+let agent_auth = env("AGENT_BASIC_AUTH");
+if (agent_auth == null) { agent_auth = ""; }
 // 分分支各 return 字面量: Lume 的 map 是固定 shape, 不能后 put 新键。
 func json_headers() {
   if (agent_auth == "") { return { "Content-Type": "application/json" }; }

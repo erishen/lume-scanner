@@ -315,8 +315,7 @@ peer-up: peer-register
 	  PEER_SITE_NAME=$(SITE_NAME) \
 	  PEER_REG_DIR=$(PEER_REG_SHARED) \
 	  AGENT_URL=http://127.0.0.1:$(SCANNER_AGENT_PORT) \
-	  AGENT_USER="$(shell grep -E '^AGENT_USER=' .env 2>/dev/null | cut -d= -f2-)" \
-	  AGENT_PASSWORD="$(shell grep -E '^AGENT_PASSWORD=' .env 2>/dev/null | cut -d= -f2-)" \
+	  AGENT_BASIC_AUTH="$(shell grep -E '^AGENT_BASIC_AUTH=' .env 2>/dev/null | cut -d= -f2-)" \
 	  AGENT_TIMEOUT=$(SCANNER_AGENT_TIMEOUT) \
 	  $(PEER_DB_ENV) \
 	    nohup $(PEER_BIN) peer_node.lume < /dev/null > .runtime-peer.log 2>&1 & \
