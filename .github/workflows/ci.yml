@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      # vendor_lume.sh 的默认 tag 是 v0.12.x；与 Dockerfile / 本地 v0.13.1 对齐，
+      # 否则 CI 拿旧二进制 check 新 DSL 会出现版本不匹配。
+      LUME_VERSION: v0.13.1
+      LUME_CORE_TAG: v0.13.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend deps
+        run: npm install --no-audit --no-fund
+
+      - name: Lume syntax / vendor check
+        run: make check
+
+      - name: Unit tests
+        run: make test
+
+      - name: Privacy guard
+        run: make privacy
+
+      - name: TypeScript typecheck
+        run: make typecheck

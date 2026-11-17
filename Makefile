@@ -72,9 +72,11 @@ test:
 check: vendor
 	@$(LUME) --check scanner.lume
 
-# TypeScript 全量类型检查(esbuild 只剥类型不查错)。首次可能冷启 node_modules。
+# TypeScript 全量类型检查(esbuild 只剥类型不查错)。
+# 走仓库自己的 node_modules/.bin/tsc —— 本机它是 ../lume/frontend/node_modules 的软链，
+# CI 里 npm install 后按 package.json 装到同一位置；不再写死兄弟 checkout 路径。
 typecheck:
-	@../lume/frontend/node_modules/.bin/tsc -p tsconfig.json --noEmit
+	@node_modules/.bin/tsc -p tsconfig.json --noEmit
 	@echo "✓ TS 类型检查通过"
 
 ui:
