@@ -194,7 +194,7 @@ export func signals_payload(limit, min_sig) {
 // 返回 { z, p }: z=(phat-0.5)/sqrt(0.25/n), p=双侧 2*(1-normcdf(|z|))。
 // normcdf 是 lume v0.13.1 二进制内建(标准正态, 单参数), 不依赖 dist.lume lib。
 // 样本不足(wn<30)或胜率为 null → 返回 null, UI 显示「—」, 不假装显著。
-func sig_significance(win, wn) {
+export func sig_significance(win, wn) {
   if (win == null or wn == null or int(wn) < 30) { return null; }
   let n = float(wn);
   let phat = float(win) / 100.0;
@@ -305,7 +305,7 @@ export func signal_stats_payload() {
     window: "180d",
     ts: now(),
     signals: sigs,
-    note: "胜率/平均收益 = 该信号历史 1/5/10 交易日后的价格变化(含全部事件, 未按个股去重); 显著性 = 5日胜率对 50% 的二项检验(正态近似, 有效样本<30 不判), 显著↓仅说明历史反向, 不等于反向交易能盈利(交易成本/regime 未计); 仅描述历史, 不构成投资建议",
+    note: "上涨率/平均收益 = 该信号历史 1/5/10 交易日后的价格变化(含全部事件, 未按个股去重); 5日上涨率 = 第5日收盘价高于信号日的比例(只看是否上涨, 不含交易成本/跌幅, 不是策略盈利胜率); 显著性 = 上涨率对 50% 的二项检验(正态近似, 有效样本<30 不判), 显著↓仅说明历史反向, 不等于反向交易能盈利(交易成本/regime 未计); 仅描述历史, 不构成投资建议",
   });
   return get(STAT_CACHE, "data", null);
 }

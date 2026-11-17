@@ -208,9 +208,13 @@ function SignalsTab({ onStock, onInd }: Openers) {
       return n;
     });
   const [err, setErr] = useState("");
+  const seq = useRef(0);   // 请求序号守卫: 只让最后一次请求落地, 防快速切阈值时旧响应覆盖新结果
   useEffect(() => {
+    const my = ++seq.current;
     setSel(new Set());
-    fetchSignals(80, minSig).then(setData).catch((e) => setErr(String(e)));
+    fetchSignals(80, minSig)
+      .then((d) => { if (my === seq.current) setData(d); })
+      .catch((e) => { if (my === seq.current) setErr(String(e)); });
   }, [minSig]);
   if (err) return <div className="err">加载失败: {err}</div>;
   if (!data) return <div className="kv">加载中…</div>;
@@ -366,8 +370,10 @@ function ScreenTab({ onStock, onInd }: Openers) {
   const [cmin, setCmin] = useState("");
   const [cmax, setCmax] = useState("");
   const [loading, setLoading] = useState(false);
+  const seq = useRef(0);   // 序号守卫: 连点「筛选」时只认最后一次, 旧响应不关 loading 也不覆盖数据
 
   const run = () => {
+    const my = ++seq.current;
     const f: Filters = {};
     if (vr) f.volume_ratio_min = Number(vr);
     if (to) f.turnover_rate_min = Number(to);
@@ -375,8 +381,9 @@ function ScreenTab({ onStock, onInd }: Openers) {
     if (cmin) f.close_min = Number(cmin);
     if (cmax) f.close_max = Number(cmax);
     setLoading(true);
-    fetchScreen(f, 50).then((d) => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
+    fetchScreen(f, 50)
+      .then((d) => { if (my === seq.current) { setData(d); setLoading(false); } })
+      .catch(() => { if (my === seq.current) setLoading(false); });
   };
   // 挂载即显示默认数据(无条件 = 服务端回量比 Top 50), 不用点「筛选」
   useEffect(() => { run(); }, []);
@@ -571,7 +578,7 @@ function StatsCard() {
       <h3>信号历史战绩(近 {st.window}) <span>· {st.note}</span></h3>
       <table>
         <thead>
-          <tr><th>信号</th><th>事件数</th><th>1日均</th><th>5日均</th><th>10日均</th><th>5日胜率</th><th>显著性(vs 50%)</th></tr>
+          <tr><th>信号</th><th>事件数</th><th>1日均</th><th>5日均</th><th>10日均</th><th title="基准: 信号出现后第 5 个交易日收盘价 > 信号日收盘价 的比例(上涨概率); 不含交易成本、不看涨幅大小, 不是策略盈利胜率">5日上涨率</th><th title="二项检验: 上涨率 vs 50% 基准(正态近似, 有效样本<30 不判)。显著↓仅说明历史反向, 不代表反向交易可盈利">显著性(vs 50%)</th></tr>
         </thead>
         <tbody>
           {st.signals.map((s) => {
@@ -714,7 +721,14 @@ function PaperCorr({ data }: { data: PaperPayload }) {
 function PaperTab({ onStock }: Openers) {
   const [pk, setPk] = useState<PaperPayload | null>(null);
   const [err, setErr] = useState("");
-  const load = () => { setErr(""); fetchPaper().then(setPk).catch((e) => setErr(String(e))); };
+  const seq = useRef(0);   // 序号守卫: 手动刷新连点时只认最后一次
+  const load = () => {
+    const my = ++seq.current;
+    setErr("");
+    fetchPaper()
+      .then((d) => { if (my === seq.current) setPk(d); })
+      .catch((e) => { if (my === seq.current) setErr(String(e)); });
+  };
   useEffect(() => { load(); }, []);
   if (err) return <div className="err">模拟仓加载失败: {err}</div>;
   if (!pk) return <div className="card"><div className="kv">加载中…</div></div>;
@@ -1008,11 +1022,15 @@ function StockTab({ seed, onQuery }: { seed?: string; onQuery?: (code: string) =
   const [data, setData] = useState<StockPayload | null>(null);
   const [err, setErr] = useState("");
   const lastAuto = useRef("");
+  const seq = useRef(0);   // 序号守卫: 快速切个股/天数时, 旧票的 K 线回来晚不覆盖新票
 
   const load = (c: string, d: string) => {
+    const my = ++seq.current;
     setErr("");
     setShowAll(false);   // 每次新查询回到「最近 30 行」视图
-    fetchStock(c, Number(d)).then(setData).catch((e) => setErr(String(e)));
+    fetchStock(c, Number(d))
+      .then((data) => { if (my === seq.current) setData(data); })
+      .catch((e) => { if (my === seq.current) setErr(String(e)); });
   };
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1095,15 +1113,17 @@ function IndicatorsTab({ seed, onQuery }: { seed?: string; onQuery?: (code: stri
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const lastAuto = useRef("");
+  const seq = useRef(0);   // 序号守卫: 仅最后一次计算的结果落地, 旧响应不覆盖也不提前关 loading
 
   const load = (c?: string) => {
+    const my = ++seq.current;
     const target = c ?? code;
     setErr("");
     setLoading(true);
     fetchIndicators(target, Number(days) || 200, Number(period) || 9)
-      .then(setData)
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
+      .then((data) => { if (my === seq.current) setData(data); })
+      .catch((e) => { if (my === seq.current) setErr(String(e)); })
+      .finally(() => { if (my === seq.current) setLoading(false); });
   };
   // 共享 seed 变化(从个股页/信号页跟过来): 带入代码并自动计算(显式传 seed 避开闭包旧值)
   useEffect(() => {

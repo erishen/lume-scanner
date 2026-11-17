@@ -1,0 +1,21 @@
+// sig_significance 的 golden 探针: 直接调用真实编译后的 repo.sig_significance,
+// 每个用例输出一行 "CASE<TAB>name<TAB>json|null", 由 Python 侧做独立数值断言。
+// 注意: Lume 的 import 相对脚本所在目录解析 (本文件在 tests/fixtures/)。
+import "../../src/repo.lume" as repo;
+
+func emit(name, win, wn) {
+  print("CASE\t" + name + "\t" + str(repo.sig_significance(win, wn)));
+}
+
+// 正常域: z=0 / 双侧对称 / 大样本 / 极端胜率
+emit("win50_n1000", 50.0, 1000);
+emit("win60_n100", 60.0, 100);
+emit("win40_n100", 40.0, 100);
+emit("win30_n100", 30.0, 100);
+emit("win100_n30", 100.0, 30);
+emit("win0_n30", 0.0, 30);
+emit("win398_n56000", 39.8, 56000);
+// 边界: 样本不足 / null 输入 → null
+emit("win50_n29", 50.0, 29);
+emit("winnull", null, 1000);
+emit("wnnull", 50.0, null);
