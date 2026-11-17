@@ -162,11 +162,11 @@ SCANNER_AGENT_PORT ?= 18199
 # 默认 90s 实测不够(流程本身要 100s+), 表现是"对端答了但连接已超时"。
 # 这里放宽到 300s; 主 agent 那侧也有自己的超时, 两边都要够长。
 SCANNER_AGENT_TIMEOUT ?= 300
-AGENT_HTTPD ?= ../lume/agent-httpd/bin/agent-httpd
+AGENT_HTTPD ?= ../agent-httpd/bin/agent-httpd
 
 agent-up:
 	@if [ ! -x "$(AGENT_HTTPD)" ]; then \
-	  echo "✗ 找不到 $(AGENT_HTTPD) —— 先 cd ../lume/agent-httpd && make" >&2; exit 1; fi
+	  echo "✗ 找不到 $(AGENT_HTTPD) —— 先 cd ../agent-httpd && make" >&2; exit 1; fi
 	@if lsof -nP -iTCP:$(SCANNER_AGENT_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 	  echo "  scanner agent :$(SCANNER_AGENT_PORT) 已在监听"; \
 	 else \
