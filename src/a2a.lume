@@ -24,7 +24,7 @@ let PROTOCOL_VERSION = "1.0";
 // 从 peer 节点自己的 host:port 拼出对外 base url。
 //
 // A2A 客户端会拿 card 里的 url **直接发请求** —— 这是最容易踩的坑:
-// 实测配了 `PEER_PUBLIC_URL=http://192.168.1.50:18191` 但节点只绑
+// 实测配了 `PEER_PUBLIC_URL=http://192.168.1.20:18191`(示例地址) 但节点只绑
 // `127.0.0.1`, 客户端照 card 去连直接 ConnectionRefused, 而 card 本身
 // 看起来完全正常(字段齐全), 排查时极易误判为客户端问题。
 //
