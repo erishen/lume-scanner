@@ -233,6 +233,12 @@ export async function fetchIndexes(): Promise<RealtimeIndexes> {
 }
 
 // ---- 信号历史战绩 / 今日精选(「个人投资价值」层: 规则从信仰变证据) ----
+export interface SignalSignificance {
+  z: number;
+  p: number;
+  n: number;
+}
+
 export interface SignalStat {
   sig: string;
   n: number;
@@ -240,6 +246,8 @@ export interface SignalStat {
   r5?: number | null;
   r10?: number | null;
   win5?: number | null;
+  // 胜率相对 50% 的二项检验(正态近似): p<0.05 才算显著, 否则可能是噪音
+  stat?: SignalSignificance | null;
 }
 
 export interface SignalStatsPayload {

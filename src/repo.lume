@@ -190,6 +190,25 @@ export func signals_payload(limit, min_sig) {
 // ============================================================================
 
 // 按统计行的「信号列前缀」取列组装信号历史行(SQL 动态列名 → 逐 get, 缺列不硬填)
+// 胜率显著性(二项检验正态近似, H0: p=50%)。win5% 与有效样本数 wn 入参,
+// 返回 { z, p }: z=(phat-0.5)/sqrt(0.25/n), p=双侧 2*(1-normcdf(|z|))。
+// normcdf 是 lume v0.13.1 二进制内建(标准正态, 单参数), 不依赖 dist.lume lib。
+// 样本不足(wn<30)或胜率为 null → 返回 null, UI 显示「—」, 不假装显著。
+func sig_significance(win, wn) {
+  if (win == null or wn == null or int(wn) < 30) { return null; }
+  let n = float(wn);
+  let phat = float(win) / 100.0;
+  let se = sqrt(0.25 / n);
+  if (se <= 0.0) { return null; }
+  let z = (phat - 0.5) / se;
+  let az = z;
+  if (az < 0.0) { az = -az; }
+  let p = 2.0 * (1.0 - normcdf(az));
+  if (p < 0.0) { p = 0.0; }
+  if (p > 1.0) { p = 1.0; }
+  return { z: z, p: p, n: int(wn) };
+}
+
 func sig_rec(x, sig, pre) {
   let rec = { sig: sig, n: int(get(x, pre + "_n", 0)) };
   let r1 = get(x, pre + "_r1", null);
@@ -200,6 +219,9 @@ func sig_rec(x, sig, pre) {
   if (r10 != null) { put(rec, "r10", r10); }
   let w = get(x, pre + "_win", null);
   if (w != null) { put(rec, "win5", w); }
+  let wn = get(x, pre + "_wn", null);
+  let sg = sig_significance(w, wn);
+  if (sg != null) { put(rec, "stat", sg); }
   return rec;
 }
 
@@ -229,27 +251,33 @@ export func signal_stats_payload() {
     "avg(case when macd_cross=1 and c5 is not null then (c5-close)/close*100.0 end) macd_r5, " +
     "avg(case when macd_cross=1 and c10 is not null then (c10-close)/close*100.0 end) macd_r10, " +
     "100.0*sum(case when macd_cross=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when macd_cross=1 and c5 is not null then 1 end),0) macd_win, " +
+    "count(case when macd_cross=1 and c5 is not null then 1 end) macd_wn, " +
     "count(case when kdj_cross=1 then 1 end) kdj_n, " +
     "avg(case when kdj_cross=1 and c1 is not null then (c1-close)/close*100.0 end) kdj_r1, " +
     "avg(case when kdj_cross=1 and c5 is not null then (c5-close)/close*100.0 end) kdj_r5, " +
     "avg(case when kdj_cross=1 and c10 is not null then (c10-close)/close*100.0 end) kdj_r10, " +
     "100.0*sum(case when kdj_cross=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when kdj_cross=1 and c5 is not null then 1 end),0) kdj_win, " +
+    "count(case when kdj_cross=1 and c5 is not null then 1 end) kdj_wn, " +
     "count(case when rsi_oversold=1 then 1 end) rsi_n, " +
     "avg(case when rsi_oversold=1 and c1 is not null then (c1-close)/close*100.0 end) rsi_r1, " +
     "avg(case when rsi_oversold=1 and c5 is not null then (c5-close)/close*100.0 end) rsi_r5, " +
     "avg(case when rsi_oversold=1 and c10 is not null then (c10-close)/close*100.0 end) rsi_r10, " +
     "100.0*sum(case when rsi_oversold=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when rsi_oversold=1 and c5 is not null then 1 end),0) rsi_win, " +
+    "count(case when rsi_oversold=1 and c5 is not null then 1 end) rsi_wn, " +
     "count(case when obv_signal=1 then 1 end) obv_n, " +
     "avg(case when obv_signal=1 and c1 is not null then (c1-close)/close*100.0 end) obv_r1, " +
     "avg(case when obv_signal=1 and c5 is not null then (c5-close)/close*100.0 end) obv_r5, " +
     "avg(case when obv_signal=1 and c10 is not null then (c10-close)/close*100.0 end) obv_r10, " +
     "100.0*sum(case when obv_signal=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when obv_signal=1 and c5 is not null then 1 end),0) obv_win, " +
+    "count(case when obv_signal=1 and c5 is not null then 1 end) obv_wn, " +
     "count(case when boll_position>1 then 1 end) boll_n, " +
     "avg(case when boll_position>1 and c5 is not null then (c5-close)/close*100.0 end) boll_r5, " +
     "100.0*sum(case when boll_position>1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when boll_position>1 and c5 is not null then 1 end),0) boll_win, " +
+    "count(case when boll_position>1 and c5 is not null then 1 end) boll_wn, " +
     "count(case when williams_oversold=1 then 1 end) wil_n, " +
     "avg(case when williams_oversold=1 and c5 is not null then (c5-close)/close*100.0 end) wil_r5, " +
-    "100.0*sum(case when williams_oversold=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when williams_oversold=1 and c5 is not null then 1 end),0) wil_win " +
+    "100.0*sum(case when williams_oversold=1 and c5>close then 1.0 else 0.0 end)/nullif(count(case when williams_oversold=1 and c5 is not null then 1 end),0) wil_win, " +
+    "count(case when williams_oversold=1 and c5 is not null then 1 end) wil_wn " +
     "from (" +
     "  select close, " +
     "    lead(close,1)  over (partition by code order by date) c1, " +
@@ -277,7 +305,7 @@ export func signal_stats_payload() {
     window: "180d",
     ts: now(),
     signals: sigs,
-    note: "胜率/平均收益 = 该信号历史 1/5/10 交易日后的价格变化(含全部事件, 未按个股去重); 仅描述历史, 不构成对未来有效的承诺",
+    note: "胜率/平均收益 = 该信号历史 1/5/10 交易日后的价格变化(含全部事件, 未按个股去重); 显著性 = 5日胜率对 50% 的二项检验(正态近似, 有效样本<30 不判), 显著↓仅说明历史反向, 不等于反向交易能盈利(交易成本/regime 未计); 仅描述历史, 不构成投资建议",
   });
   return get(STAT_CACHE, "data", null);
 }

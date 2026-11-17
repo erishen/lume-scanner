@@ -571,12 +571,27 @@ function StatsCard() {
       <h3>信号历史战绩(近 {st.window}) <span>· {st.note}</span></h3>
       <table>
         <thead>
-          <tr><th>信号</th><th>事件数</th><th>1日均</th><th>5日均</th><th>10日均</th><th>5日胜率</th></tr>
+          <tr><th>信号</th><th>事件数</th><th>1日均</th><th>5日均</th><th>10日均</th><th>5日胜率</th><th>显著性(vs 50%)</th></tr>
         </thead>
         <tbody>
           {st.signals.map((s) => {
             const w = s.win5;
             const wTone = w == null ? "" : w >= 50 ? "up" : w >= 45 ? "" : "down";
+            const sg = s.stat;
+            let sigText = "—";
+            let sigTone = "";
+            const pText = sg ? (sg.p > 0 ? sg.p.toFixed(3) : "<0.001") : "";
+            if (sg) {
+              if (sg.p < 0.01) {
+                sigText = `${sg.z >= 0 ? "显著↑" : "显著↓"} p=${pText}`;
+                sigTone = sg.z >= 0 ? "up" : "down";
+              } else if (sg.p < 0.05) {
+                sigText = `弱显著 p=${pText}`;
+                sigTone = sg.z >= 0 ? "up" : "down";
+              } else {
+                sigText = `不显著 p=${pText}`;
+              }
+            }
             return (
               <tr key={s.sig}>
                 <td className="name">{s.sig}</td>
@@ -585,6 +600,7 @@ function StatsCard() {
                 <td className={cls(s.r5 ?? 0)}>{s.r5 == null ? "—" : s.r5.toFixed(2) + "%"}</td>
                 <td className={cls(s.r10 ?? 0)}>{s.r10 == null ? "—" : s.r10.toFixed(2) + "%"}</td>
                 <td className={wTone}>{w == null ? "—" : w.toFixed(1) + "%"}</td>
+                <td className={sigTone} title={sg ? `z=${sg.z.toFixed(2)}, 有效样本=${sg.n}, 二项检验正态近似 H0:胜率=50%` : "有效样本不足 30, 不做显著性判断"}>{sigText}</td>
               </tr>
             );
           })}

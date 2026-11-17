@@ -27,8 +27,9 @@ COPY peer_node.lume ./
 # 以前从 ../lume-core/lib 复制进 .runtime/ 再 COPY —— 那份副本无版本标记,
 # 会静默停在旧版(镜像里 13KB 的 peer.lume / 源码 17KB), 症状只是
 # "module 'peer' has no export 'config_warnings'", 指不到旧文件。
-# 版本保持 v0.12.1(与容器内二进制同代), 路径随源码 import 挪到 /app/vendor/lume-core。
-ARG LUME_CORE_VERSION=v0.12.1
+# 版本保持 v0.13.1(与容器内二进制 lume v0.13.1 同代), 路径随源码 import 挪到 /app/vendor/lume-core。
+# 不要升 v0.14.0: 本地有 tag 但 GitHub 未发布 release 资产(404), 构建会失败。
+ARG LUME_CORE_VERSION=v0.13.1
 ARG LUME_CORE_REPO=erishen/lume-core
 ARG TARGETARCH
 # base 镜像已经 USER 10001, 非 root 建不了 /app/vendor。
