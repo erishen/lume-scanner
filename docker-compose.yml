@@ -113,6 +113,11 @@ services:
       PEER_ROOT: "${PEER_ROOT:-}"
       PEER_SITE_NAME: "lume-scanner"
       PEER_REGISTRY: "/app/peer-identity/peers-identity.json"
+      # 本机 agent(:18199, 宿主机)带 Basic Auth —— peer_node 的 /peer/agent
+      # 与 agent-card 要用它。容器内 127.0.0.1 不是宿主机, 必须走
+      # host.docker.internal; 头值从 .env 的 AGENT_BASIC_AUTH 透传(留空 = 无认证实例)。
+      AGENT_URL: "http://host.docker.internal:18199"
+      AGENT_BASIC_AUTH: "${AGENT_BASIC_AUTH:-}"
       # 行情库位置(与主服务一致)
       SCANNER_DB: /app/data/stock_analysis.db
       ASSET_DB: /app/data/asset_snapshot.db
