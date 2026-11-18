@@ -1,5 +1,11 @@
 // sci.lume — 信息与计算科学算法库（混合分层：.lume 算法层，零 C 摩擦）
 //
+// 兼容契约（P16.1）：本库必须能被最旧受支持的宿主 lume 0.12.2 import。
+// 0.12 把 for (let X ...) 的声明登记在「包含该循环的块」里，同一块内
+// 重复的 let 名会直接中止 import；因此每个块的循环变量必须唯一命名。
+// 不要依赖 0.13 的 for-init 块作用域，也不要去掉 let（0.13 会报未定义）。
+// 回归门禁：make test -> lib-compat（tests/lib-compat.py）。
+//
 // 三后端（解释器 / 文本 IR / LLVM）执行同一份 AST，浮点运算顺序由 lume
 // 显式控制，因此三后端天然一致，无需像 C native 那样手写镜像。
 //
@@ -9,7 +15,15 @@
 //   插值        interp_linear / interp_lagrange
 //   多项式      poly_val / poly_deriv
 //   求根        bisect（通用 f）/ newton（通用 f, f'）+ 多项式薄包装
-//   ODE         rk4（通用 dy/dt = f(t,y)）+ 线性/仿射/多项式薄包装
+//   ODE         rk4（标量固定步长）/ rk4_adaptive（自适应步长+误差控制）/
+//               rk4_sys（向量系统 dy/dt=f(t,y)）+ 线性/仿射/多项式薄包装
+//               ode_theta（θ-方法族）/ ode_imp_euler（后向 Euler，L-稳定）/
+//               ode_trapezoid（梯形 / Crank–Nicolson，A-稳定）——刚性方程
+//   辛积分    verlet（Velocity Verlet，保 Hamilton 结构 / 长期能量有界）
+//   多步法    adams_bashforth / ab2 / ab3 / ab4（显式，稳态每步仅 1 次 f 求值）/
+//               bdf2（隐式二阶 BDF，A-稳定，刚性方程）
+//   事件/稠密  ode_event / ode_event_all（变号检测 + 局部 RK4 二分定位）/
+//               rk4_dense（三次 Hermite 稠密输出，任意 t 求值，O(h⁴)）
 //
 // 使用：
 //   import "sci.lume" as sci;
@@ -25,7 +39,12 @@
 // 编译后端会明确报错；函数内直接传给算法内核则三后端全部可用。
 // ───────────────────────────────────────────────────────────────────
 
-export let SCI_VERSION = "0.2.0";
+// v0.3.0: rk4_sys（向量 ODE 系统）+ rk4_adaptive（自适应步长）
+// v0.4.0: ode_theta / ode_imp_euler / ode_trapezoid（隐式刚性求解器，A-稳定）
+// v0.5.0: verlet（辛积分，长期能量有界）
+// v0.6.0: adams_bashforth / ab2 / ab3 / ab4 + bdf2（线性多步法族）
+// v0.7.0: ode_event / ode_event_all / rk4_dense（事件检测 + 稠密输出）
+export let SCI_VERSION = "0.7.0";
 
 // 自然对数底，信息论统一用 log2（log(x)/LN2 即 log2(x)）
 let LN2 = log(2.0);
@@ -98,8 +117,8 @@ export func mutual_information(joint: float[][]): float {
   }
   for (let j = 0; j < cols; j = j + 1) {
     let sj = 0.0;
-    for (let i = 0; i < rows; i = i + 1) {
-      sj = sj + joint[i][j];
+    for (let i2 = 0; i2 < rows; i2 = i2 + 1) {
+      sj = sj + joint[i2][j];
     }
     py = push(py, sj);
   }
@@ -263,11 +282,13 @@ export func newton_poly(coeffs: float[], x0: float, tol: float): float {
 
 // ════════════════════════════════════════════════════════════════
 // 常微分方程（RK4：通用 f(t,y) 内核 + 数据驱动薄包装）
-//   rk4        : dy/dt = f(t, y)        —— 任意 RHS
-//   rk4_linear : dy/dt = a·y            （指数增长/衰减）
-//   rk4_affine : dy/dt = a·y + b        （带漂移项）
-//   rk4_poly   : dy/dt = poly(t)        （RHS 仅为 t 的多项式）
-// 返回包含初值的轨迹 list（长度 n+1），便于与解析解或欧拉法对比。
+//   rk4          : dy/dt = f(t, y)      —— 任意 RHS，固定步长
+//   rk4_adaptive : dy/dt = f(t, y)      —— 自适应步长（步长加倍误差控制）
+//   rk4_sys      : dy/dt = f(t, y)      —— 向量系统（y 为 float[]）
+//   rk4_linear   : dy/dt = a·y          （指数增长/衰减）
+//   rk4_affine   : dy/dt = a·y + b      （带漂移项）
+//   rk4_poly     : dy/dt = poly(t)      （RHS 仅为 t 的多项式）
+// rk4 系返回等距轨迹（长度 n+1）；rk4_adaptive 返回变步长 [[t,y], ...]。
 // ════════════════════════════════════════════════════════════════
 
 // 经典四阶 Runge-Kutta：dy/dt = f(t, y)。步数 n，起点 (t0, y0)。
@@ -302,6 +323,169 @@ export func rk4_poly(coeffs: float[], y0: float, t0: float, t1: float, n: int): 
 }
 
 // ════════════════════════════════════════════════════════════════
+// 自适应步长 RK4（步长加倍 / Richardson 外推误差控制）
+// 返回变长轨迹 [[t0,y0], [t1,y1], ...]，步长随局部误差自动伸缩。
+// 每步对比「一步 h」与「两步 h/2」的结果：差 d 估计局部误差（RK4 为 O(h⁵)），
+// 接受时用 y₂ + d/15 外推把精度提升一阶；h 按 (tol/err)^{1/5} 调节并限幅
+// [0.2, 5.0]，拒绝步只缩小 h、不推进 t。tol 为 rel+abs 混合容差
+// tol_eff = tol·(1+|y|)。复用 rk4 作单步内核，零重复实现。
+// 100000 次迭代为死循环保护；h ≤ 1e-12 时强制接受，避免步长塌缩停滞。
+// 契约：若上限耗尽（tol 苛刻到浮点精度以下、或 RHS 有奇点），末点 t 可能
+//       < t1；调用方可用 traj[len(traj)-1][0] 检查是否积到终点，不会挂死。
+// ════════════════════════════════════════════════════════════════
+export func rk4_adaptive(f: fn(float, float) => float, y0: float, t0: float,
+                         t1: float, tol: float, h0: float): float[][] {
+  let t: float = t0;
+  let y: float = y0;
+  let h: float = h0;
+  let out: float[][] = [];
+  let row0: float[] = [];
+  row0 = push(row0, t);
+  row0 = push(row0, y);
+  out = push(out, row0);
+  for (let it = 0; it < 100000; it = it + 1) {
+    if (t >= t1) { break; }
+    if (t + h > t1) { h = t1 - t; }          // 截断到终点
+    let ybig: float[] = rk4(f, y, t, t + h, 1);
+    let ya: float[]   = rk4(f, y, t, t + h / 2.0, 1);
+    let ysm: float[]  = rk4(f, ya[1], t + h / 2.0, t + h, 1);
+    let d: float = ysm[1] - ybig[1];
+    let err: float = abs(d);
+    let scale: float = tol * (1.0 + abs(ysm[1]));
+    // RK4 局部误差 O(h⁵) → 步长因子指数 1/5
+    let ratio: float = scale / (err + 1e-30);
+    let fac: float = 0.9 * pow(ratio, 0.2);
+    if (fac < 0.2) { fac = 0.2; }
+    if (fac > 5.0) { fac = 5.0; }
+    if (err <= scale || h <= 1e-12) {         // 接受
+      t = t + h;
+      y = ysm[1] + d / 15.0;                 // Richardson 外推
+      let row: float[] = [];
+      row = push(row, t);
+      row = push(row, y);
+      out = push(out, row);
+    }
+    h = h * fac;                             // 拒绝时 fac<1，自动缩小重试
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 刚性 ODE：θ-方法族（隐式单步法）
+//   y_{n+1} = y_n + h·[(1−θ)·f(t_n, y_n) + θ·f(t_{n+1}, y_{n+1})]
+//   θ = 1    后向 Euler：L-稳定、一阶，刚性瞬变被迅速阻尼
+//   θ = 0.5  梯形法则（= ODE 版 Crank–Nicolson）：A-稳定、二阶
+//   θ = 0    显式 Euler（仅作参数族端点对照，非 A-稳定）
+// 显式 RK4 对 y'=λy 的稳定域约 |λh| ≲ 2.8；λ=−1000 时步长须 h ≲ 0.0028，
+// 而 A-稳定隐式法用 h=0.1 仍可稳定推进（精度另有取舍）。
+// 隐式方程由 Newton 迭代求解，f 对 y 的偏导用中心差分近似（无需用户提供 f'）：
+//   g(z)  = z − y_n − h·[(1−θ)f_n + θ·f(t_{n+1},z)]
+//   g'(z) = 1 − hθ·[f(z+ε) − f(z−ε)]/(2ε),  ε = 1e-7·(1+|z|)
+// Newton 初值取上一步的 y（刚性下比显式 Euler 预测更稳），固定 20 次上限，
+// |Δz| < 1e-12 提前退出。返回含初值的轨迹 float[]（长度 n+1）。
+// ════════════════════════════════════════════════════════════════
+export func ode_theta(f: fn(float, float) => float, y0: float, t0: float,
+                      t1: float, n: int, theta: float): float[] {
+  let h: float = (t1 - t0) / (n * 1.0);
+  let y: float = y0;
+  let out: float[] = [];
+  out = push(out, y);
+  for (let step = 0; step < n; step = step + 1) {
+    let tn: float = t0 + h * (step * 1.0);
+    let fold: float = f(tn, y);
+    let z: float = y;
+    for (let it = 0; it < 20; it = it + 1) {
+      let fz: float = f(tn + h, z);
+      let g: float = z - y - h * ((1.0 - theta) * fold + theta * fz);
+      let eps: float = 1e-7 * (1.0 + abs(z));
+      let fp: float = f(tn + h, z + eps);
+      let fm: float = f(tn + h, z - eps);
+      let dg: float = 1.0 - h * theta * (fp - fm) / (2.0 * eps);
+      let dz: float = g / dg;
+      z = z - dz;
+      if (abs(dz) < 1e-12) { break; }
+    }
+    y = z;
+    out = push(out, y);
+  }
+  return out;
+}
+
+// 后向 Euler（θ=1）：一阶、L-稳定，强阻尼刚性瞬变。
+export func ode_imp_euler(f: fn(float, float) => float, y0: float, t0: float,
+                          t1: float, n: int): float[] {
+  return ode_theta(f, y0, t0, t1, n, 1.0);
+}
+
+// 梯形法则 / Crank–Nicolson（θ=0.5）：二阶、A-稳定（不 L-稳定）。
+export func ode_trapezoid(f: fn(float, float) => float, y0: float, t0: float,
+                          t1: float, n: int): float[] {
+  return ode_theta(f, y0, t0, t1, n, 0.5);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 向量 ODE 系统（一阶方程组）：dy/dt = f(t, y)，y 为状态向量 float[]。
+// 与 rk4 同阶四阶 Runge–Kutta；返回轨迹（长度 n+1 的 float[][]，每行一时刻状态）。
+// 配套向量工具 vadd / vsub / vscale（值语义，返回新数组，不原地修改）。
+// ════════════════════════════════════════════════════════════════
+
+// 向量加减与数乘（值语义，返回新数组，不原地修改）
+export func vadd(a: float[], b: float[]): float[] {
+  let n = len(a);
+  let out: float[] = [];
+  for (let i = 0; i < n; i = i + 1) { out = push(out, a[i] + b[i]); }
+  return out;
+}
+export func vsub(a: float[], b: float[]): float[] {
+  let n = len(a);
+  let out: float[] = [];
+  for (let i = 0; i < n; i = i + 1) { out = push(out, a[i] - b[i]); }
+  return out;
+}
+export func vscale(s: float, a: float[]): float[] {
+  let n = len(a);
+  let out: float[] = [];
+  for (let i = 0; i < n; i = i + 1) { out = push(out, s * a[i]); }
+  return out;
+}
+
+// 矩阵-向量乘 matvec(A, x)：A 为 m×n，x 为长度 n，返回长度 m。
+func matvec(A: float[][], x: float[]): float[] {
+  let m = len(A);
+  let out: float[] = [];
+  for (let i = 0; i < m; i = i + 1) {
+    let s = 0.0;
+    for (let j = 0; j < len(x); j = j + 1) { s = s + A[i][j] * x[j]; }
+    out = push(out, s);
+  }
+  return out;
+}
+
+// 经典四阶 RK：向量系统 dy/dt = f(t, y)。返回含初值的轨迹（float[][]）。
+export func rk4_sys(f: fn(float, float[]) => float[], y0: float[], t0: float, t1: float, n: int): float[][] {
+  let h = (t1 - t0) / float(n);
+  let y: float[] = y0;
+  let out: float[][] = [y0];
+  let t = t0;
+  for (let i = 0; i < n; i = i + 1) {
+    let k1: float[] = f(t, y);
+    let k2: float[] = f(t + h / 2.0, vadd(y, vscale(h / 2.0, k1)));
+    let k3: float[] = f(t + h / 2.0, vadd(y, vscale(h / 2.0, k2)));
+    let k4: float[] = f(t + h, vadd(y, vscale(h, k3)));
+    let sum: float[] = vadd(k1, vadd(vscale(2.0, k2), vadd(vscale(2.0, k3), k4)));
+    y = vadd(y, vscale(h / 6.0, sum));
+    t = t + h;
+    out = push(out, y);
+  }
+  return out;
+}
+
+// 线性系统薄包装：dy/dt = A·y（A 为方阵）。与 rk4_sys 同精度。
+export func rk4_sys_linear(A: float[][], y0: float[], t0: float, t1: float, n: int): float[][] {
+  return rk4_sys((t: float, y: float[]) => matvec(A, y), y0, t0, t1, n);
+}
+
+// ════════════════════════════════════════════════════════════════
 // 数值积分（通用 f）：中点法 ∫[a,b] f(x) dx，n 个等宽子区间。
 // 与 trapz/simpson（数据驱动）互补：f 为闭包时用它。
 // ════════════════════════════════════════════════════════════════
@@ -314,4 +498,286 @@ export func integrate(f: fn(float) => float, a: float, b: float, n: int): float 
     s = s + f(xm);
   }
   return s * h;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 辛积分（几何数值积分）：Velocity Verlet / Störmer–Verlet
+// 适用可分离 Hamiltonian H(q,p) = p²/(2m) + V(q)，力 F(q) = −V'(q)：
+//   p_{n+1/2} = p_n + (h/2)·F(q_n)
+//   q_{n+1}   = q_n + h·p_{n+1/2}/m
+//   p_{n+1}   = p_{n+1/2} + (h/2)·F(q_{n+1})
+// 二阶、时间可逆、辛（保相空间体积）。由后向误差分析，它精确守恒一个
+// 修正 Hamiltonian H̃ = H + O(h²)，故真实能量误差**有界振荡**、不随时间漂移；
+// 而 RK4 虽四阶精度更高，能量却会单调耗散（误差 ∝ t），长期积分失真。
+// 适合天体力学 / 分子动力学等需要长时间定性正确的场景。
+// 返回轨迹 float[][]：每行 [q, p]，长度 n+1（含初值）。
+// 注：辛性依赖固定步长，切勿与自适应步长混用。
+// ════════════════════════════════════════════════════════════════
+export func verlet(force: fn(float) => float, q0: float, p0: float,
+                   m: float, dt: float, n: int): float[][] {
+  let q: float = q0;
+  let p: float = p0;
+  let out: float[][] = [];
+  let row0: float[] = [];
+  row0 = push(row0, q);
+  row0 = push(row0, p);
+  out = push(out, row0);
+  for (let step = 0; step < n; step = step + 1) {
+    let ph: float = p + 0.5 * dt * force(q);
+    q = q + dt * ph / m;
+    p = ph + 0.5 * dt * force(q);
+    let row: float[] = [];
+    row = push(row, q);
+    row = push(row, p);
+    out = push(out, row);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 线性多步法（Adams–Bashforth 显式族 / BDF2 隐式）
+//   adams_bashforth(f, y0, t0, t1, n, order)，order = 1..4
+//     y_{n+1} = y_n + h·Σ_{j=0}^{p−1} b_j f_{n−j}
+//     AB1 = 显式 Euler；AB2/3/4 分别为 2/3/4 阶。
+//   稳态每步只需 **1 次** f 求值（RK4 需 4 次），历史右端项存在滚动窗口里；
+//   代价是需要 p−1 个启动值（本库用 rk4 生成，启动段每步 4 次 + 1 次历史 f）
+//   且稳定域随阶数变窄：y'=λy 时 AB2 要求 |λh| ≲ 1、AB4 仅 ≲ 0.3，
+//   刚性问题不适用。
+//   bdf2(f, y0, t0, t1, n)：
+//     3y_{n+1} − 4y_n + y_{n−1} = 2h·f(t_{n+1}, y_{n+1})
+//   二阶、A-稳定，且 λh→−∞ 时特征方程 (3−2λh)r²−4r+1=0 的两根均 →0，
+//   即刚性模态被强阻尼（stiff decay）；梯形法虽 A-稳定却会留下 (−1)^n 振荡。
+//   隐式方程同样用 Newton + 中心差分 Jacobian，风格与 ode_theta 一致；
+//   首步用 A-稳定梯形法启动（局部 O(h³)，不破坏整体二阶；会留下 O(1)
+//   反号瞬变，由后续 BDF2 步迅速阻尼）。
+//   所有函数返回含初值的等距轨迹 float[]（长度 n+1）。
+// ════════════════════════════════════════════════════════════════
+
+// Adams–Bashforth 系数，按「最旧 → 最新」的历史 f 顺序排列（与滚动窗口 fh 对齐）：
+//   AB1 [1]
+//   AB2 [−1/2, 3/2]
+//   AB3 [5/12, −16/12, 23/12]
+//   AB4 [−9/24, 37/24, −59/24, 55/24]
+// 教科书通常写成 (f_n, f_{n−1}, …) 顺序，此处统一反序。每组系数之和 = 1。
+func ab_coeffs(p: int): float[] {
+  if (p == 1) { return [1.0]; }
+  if (p == 2) { return [-0.5, 1.5]; }
+  if (p == 3) { return [5.0 / 12.0, -16.0 / 12.0, 23.0 / 12.0]; }
+  return [-9.0 / 24.0, 37.0 / 24.0, -59.0 / 24.0, 55.0 / 24.0];
+}
+
+// 显式 Adams–Bashforth 族通用内核。order 越界时钳制到 [1,4]；
+// n < order−1 时全部步都由 rk4 启动值覆盖（不进入多步循环）。
+export func adams_bashforth(f: fn(float, float) => float, y0: float, t0: float,
+                            t1: float, n: int, order: int): float[] {
+  if (n < 1) { return [y0]; }              // 避免 h 除零
+  let h: float = (t1 - t0) / (n * 1.0);
+  let p: int = order;
+  if (p < 1) { p = 1; }
+  if (p > 4) { p = 4; }
+  let start: int = p - 1;
+  if (start > n) { start = n; }
+  let out: float[] = [y0];
+  let fh: float[] = [];
+  fh = push(fh, f(t0, y0));
+  if (start > 0) {
+    let seed: float[] = rk4(f, y0, t0, t0 + h * (start * 1.0), start);
+    for (let k = 1; k < start + 1; k = k + 1) {
+      let tk: float = t0 + h * (k * 1.0);
+      let yk: float = seed[k];
+      out = push(out, yk);
+      fh = push(fh, f(tk, yk));
+    }
+  }
+  let c: float[] = ab_coeffs(p);
+  for (let k2 = start; k2 < n; k2 = k2 + 1) {
+    let inc: float = 0.0;
+    for (let j = 0; j < p; j = j + 1) {
+      inc = inc + c[j] * fh[j];
+    }
+    let tnext: float = t0 + h * ((k2 + 1) * 1.0);
+    let yn: float = out[k2] + h * inc;
+    out = push(out, yn);
+    // 滚动窗口：丢弃最旧的 f，追加刚算出的 f(t_{k+1}, y_{k+1})
+    let nf: float[] = [];
+    for (let j2 = 1; j2 < p; j2 = j2 + 1) {
+      nf = push(nf, fh[j2]);
+    }
+    nf = push(nf, f(tnext, yn));
+    fh = nf;
+  }
+  return out;
+}
+
+// AB2 / AB3 / AB4 便捷包装。
+export func ab2(f: fn(float, float) => float, y0: float, t0: float,
+                t1: float, n: int): float[] {
+  return adams_bashforth(f, y0, t0, t1, n, 2);
+}
+
+export func ab3(f: fn(float, float) => float, y0: float, t0: float,
+                t1: float, n: int): float[] {
+  return adams_bashforth(f, y0, t0, t1, n, 3);
+}
+
+export func ab4(f: fn(float, float) => float, y0: float, t0: float,
+                t1: float, n: int): float[] {
+  return adams_bashforth(f, y0, t0, t1, n, 4);
+}
+
+// 二阶后向差分公式（BDF2）。隐式方程
+//   g(z)  = 3z − 4y_n + y_{n−1} − 2h·f(t_{n+1}, z)
+//   g'(z) = 3 − 2h·[f(z+ε) − f(z−ε)]/(2ε),  ε = 1e-7·(1+|z|)
+// Newton 初值取 y_n，固定 20 次上限，|Δz| < 1e-12 提前退出。
+export func bdf2(f: fn(float, float) => float, y0: float, t0: float,
+                 t1: float, n: int): float[] {
+  let out: float[] = [y0];
+  if (n < 1) { return out; }
+  let h: float = (t1 - t0) / (n * 1.0);
+  // 首步用 A-稳定梯形法启动（局部 O(h³)）；瞬变不放大但会反号，后续阻尼。
+  let seed: float[] = ode_trapezoid(f, y0, t0, t0 + h, 1);
+  let y: float = seed[1];
+  let ym: float = y0;
+  out = push(out, y);
+  for (let k = 1; k < n; k = k + 1) {
+    let tn1: float = t0 + h * ((k + 1) * 1.0);
+    let z: float = y;
+    for (let it = 0; it < 20; it = it + 1) {
+      let fz: float = f(tn1, z);
+      let g: float = 3.0 * z - 4.0 * y + ym - 2.0 * h * fz;
+      let eps: float = 1e-7 * (1.0 + abs(z));
+      let fp: float = f(tn1, z + eps);
+      let fm: float = f(tn1, z - eps);
+      let dg: float = 3.0 - 2.0 * h * (fp - fm) / (2.0 * eps);
+      let dz: float = g / dg;
+      z = z - dz;
+      if (abs(dz) < 1e-12) { break; }
+    }
+    ym = y;
+    y = z;
+    out = push(out, y);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════
+// 事件检测（event location）+ 稠密输出（dense output）
+//   ode_event(f, y0, t0, t1, n, target)     首个 y(t)=target 时刻
+//   ode_event_all(...)                      区间内全部穿越事件
+//   rk4_dense(f, y0, t0, t1, n, tq)        任意 tq∈[t0,t1] 处的解
+//
+// 事件的常见用途：首次到达时间、Poincaré 截面、分段/切换系统的触发点。
+// 做法：先用 rk4 在 n 个等距网格点上扫描 g_k = y_k − target 的变号区间，
+// 再从区间左端 (ta, ya) 出发，用「单步 RK4 从 ta 直接积到 ta+mid」做二分。
+// 这样 g(t) 的求值精度是 O(mid⁵) 而非线性插值的 O(h²)；每轮只需 1 次
+// rk4（4 次 f），与网格数 n 无关，60 次二分把**数值解**的穿越点定位到机器
+// 精度（y_event 与 target 差 ~1e-16）。但网格轨迹本身由 rk4 生成，故
+// t_event 相对真解仍只有 O(h⁴) 精度：实测 n 加倍时事件时刻误差 ÷16。
+// 契约：只检测**变号穿越**（含恰好落在网格点上的 g=0），不检测相切事件
+//       （g=0 但不变号）；无事件返回空数组 float[]，调用方用 len() 判断。
+//       ode_event 返回 [t_event, y_event]；ode_event_all 返回其数组。
+//
+// 稠密输出：等距轨迹只在 t0+k·h 有值，rk4_dense 用三次 Hermite 插值在
+// 单元 [t, t+h] 内补出连续解，端点值取 rk4 步结果、端点导数取 f：
+//   y(t+θh) = (2θ³−3θ²+1)·y + (θ³−2θ²+θ)·h·f₀
+//           + (−2θ³+3θ²)·y₁ + (θ³−θ²)·h·f₁
+// 插值误差 O(h⁴)，与 RK4 的四阶精度匹配（线性插值仅 O(h²)）。实测固定
+// 单元内相对位置 θ 时 n 加倍误差比 →16；θ 随 n 漂移时比值会偏离 16，
+// 因为误差常数依赖 θ，这是插值本身的性质而非实现缺陷。
+// ════════════════════════════════════════════════════════════════
+
+// 在单元 [ta, ta+h] 内二分定位 y=target 的时刻；每轮从 (ta, ya) 单步 RK4。
+func ode_event_refine(f: fn(float, float) => float, ya: float, ta: float,
+                      h: float, target: float): float {
+  let lo: float = 0.0;
+  let hi: float = h;
+  let glo: float = ya - target;
+  for (let it = 0; it < 60; it = it + 1) {
+    let mid: float = 0.5 * (lo + hi);
+    let ym: float[] = rk4(f, ya, ta, ta + mid, 1);
+    let gm: float = ym[1] - target;
+    if (glo * gm <= 0.0) { hi = mid; } else { lo = mid; glo = gm; }
+  }
+  return ta + 0.5 * (lo + hi);
+}
+
+// 首个穿越事件。返回 [t_event, y_event]；无事件返回 []。
+export func ode_event(f: fn(float, float) => float, y0: float, t0: float,
+                      t1: float, n: int, target: float): float[] {
+  let none: float[] = [];
+  if (n < 1) { return none; }
+  let traj: float[] = rk4(f, y0, t0, t1, n);
+  let h: float = (t1 - t0) / (n * 1.0);
+  for (let k = 0; k < n + 1; k = k + 1) {
+    let g: float = traj[k] - target;
+    if (g == 0.0) { return [t0 + h * (k * 1.0), traj[k]]; }
+    if (k < n) {
+      let gn: float = traj[k + 1] - target;
+      if (g * gn < 0.0) {
+        let ta: float = t0 + h * (k * 1.0);
+        let te: float = ode_event_refine(f, traj[k], ta, h, target);
+        let ye: float[] = rk4(f, traj[k], ta, te, 1);
+        return [te, ye[1]];
+      }
+    }
+  }
+  return none;
+}
+
+// 全部穿越事件，按时间升序；返回 float[][]，每行 [t_event, y_event]。
+export func ode_event_all(f: fn(float, float) => float, y0: float, t0: float,
+                          t1: float, n: int, target: float): float[][] {
+  let out: float[][] = [];
+  if (n < 1) { return out; }
+  let traj: float[] = rk4(f, y0, t0, t1, n);
+  let h: float = (t1 - t0) / (n * 1.0);
+  for (let k = 0; k < n + 1; k = k + 1) {
+    let g: float = traj[k] - target;
+    let te: float = -1.0;
+    let ya: float = traj[k];
+    if (g == 0.0) { te = t0 + h * (k * 1.0); }
+    if (k < n) {
+      let gn: float = traj[k + 1] - target;
+      if (g * gn < 0.0) {
+        let ta: float = t0 + h * (k * 1.0);
+        te = ode_event_refine(f, traj[k], ta, h, target);
+      }
+    }
+    if (te >= 0.0) {
+      let ye: float[] = rk4(f, ya, t0 + h * (k * 1.0), te, 1);
+      let row: float[] = [];
+      row = push(row, te);
+      row = push(row, ye[1]);
+      out = push(out, row);
+    }
+  }
+  return out;
+}
+
+// 三次 Hermite 稠密输出：返回 y(tq)，tq 钳制到 [t0, t1]。
+export func rk4_dense(f: fn(float, float) => float, y0: float, t0: float,
+                      t1: float, n: int, tq: float): float {
+  if (n < 1) { return y0; }
+  if (tq <= t0) { return y0; }
+  let tmax: float = tq;
+  if (tmax > t1) { tmax = t1; }
+  let h: float = (t1 - t0) / (n * 1.0);
+  let y: float = y0;
+  let t: float = t0;
+  for (let i = 0; i < n; i = i + 1) {
+    if (t + h >= tmax) { break; }
+    let step: float[] = rk4(f, y, t, t + h, 1);
+    y = step[1];
+    t = t + h;
+  }
+  let y1: float[] = rk4(f, y, t, t + h, 1);
+  let f0: float = f(t, y);
+  let f1: float = f(t + h, y1[1]);
+  let th: float = (tmax - t) / h;
+  let th2: float = th * th;
+  let th3: float = th2 * th;
+  return (2.0 * th3 - 3.0 * th2 + 1.0) * y
+       + (th3 - 2.0 * th2 + th) * h * f0
+       + (-2.0 * th3 + 3.0 * th2) * y1[1]
+       + (th3 - th2) * h * f1;
 }

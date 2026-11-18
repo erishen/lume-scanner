@@ -74,10 +74,15 @@ vendor_from_local() {
   done
   local binver
   binver="$("$LUME_BIN" --version 2>/dev/null | head -1 || echo unknown)"
+  # lib 可追溯性: 工作树复制时记录来源 checkout 的 commit 短 SHA(无隐私, 入库可查)。
+  local libsrc="working-tree"
+  if [ "$ok" = "1" ] && git -C "$ROOT/../lume-core" rev-parse --git-dir >/dev/null 2>&1; then
+    libsrc="working-tree@$(git -C "$ROOT/../lume-core" rev-parse --short HEAD)"
+  fi
   {
     echo "source=local-checkout"
     echo "bin=$binver"
-    echo "lib=working-tree$( [ "$ok" = "1" ] || echo "(不完整)" )"
+    echo "lib=$libsrc$( [ "$ok" = "1" ] || echo "(不完整)" )"
     echo "lib_files=$(ls "$LUME_CORE_LIB" 2>/dev/null | wc -l | tr -d ' ')"
   } > "$STAMP"
 }

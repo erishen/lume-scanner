@@ -1,5 +1,6 @@
 // ml.lume —— AI/机器学习算法库（纯 .lume，零 C 改动，三后端一致）。
-// 复用 linalg（mat_mul/mat_transpose/mat_scale）与 C 内核（exp/log/sqrt）。
+// 复用 blas（mat_mul·C kernel 背书·12×）与 linalg（mat_transpose/mat_scale）
+// 及 C 内核（exp/log/sqrt）。mat_mul 走 blas（墙 3），其余矩阵变换走 linalg。
 // 语言约束规避（实证坑，见日志）：
 //   * lume 的 '/' 恒产生 float —— 所有「除以整数」处显式 * 1.0；
 //   * let 为函数作用域 —— 每个函数内循环变量名全局唯一；
@@ -7,6 +8,18 @@
 //   * list 为值语义 —— 所有「修改」经 set_* 帮助函数返回新容器。
 
 import "linalg.lume" as la;
+import "blas.lume" as blas;
+
+// 库版本：v0.1.0 初始集（kNN/k-means/逻辑回归/感知机/朴素贝叶斯/MLP/注意力）；
+// v0.2.0（2026-11-09）补激活函数族、损失函数、正规方程回归、PCA、
+// 多头注意力、表格 Q-learning、GMM-EM；v0.3.0（2026-11-09）补深度学习构件
+// （范数/层归一化/批归一化/Dropout/Conv1d·Conv2d/RNN·GRU 单元及序列前向）；
+// v0.4.0（2026-11-09）补优化器（vanilla SGD / SGD+momentum / Adam）与
+// 反向原语（embedding 查表+梯度、softmax 交叉熵损失+梯度），让纯 .lume
+// 训练循环得以落地。
+// v0.4.1（2026-11-11）mat_mul 全部接线 blas.lume（墙 3·C kernel 背书·12×：
+// attention / 正规方程 / PCA 路径自动提速·linalg 保留供 mat_transpose/mat_scale）。
+export let ML_VERSION = "0.4.1";
 
 // ---------- 内部帮助函数 ----------
 
@@ -423,14 +436,14 @@ export func mlp2_forward(W1: float[][], b1: float[], W2: float[][], b2: float[],
 // 缩放点积注意力：softmax(Q·Kᵀ/√dk)·V（单头，Q/K/V 均为 seq×dk）。
 export func attention(Q: float[][], K: float[][], V: float[][]): float[][] {
   let dk: int = len(Q[0]);
-  let S: float[][] = la.mat_mul(Q, la.mat_transpose(K));
+  let S: float[][] = blas.mat_mul(Q, la.mat_transpose(K));
   let Ss: float[][] = la.mat_scale(S, 1.0 / sqrt(dk * 1.0));
   let A: float[][] = [];
   for (let ri = 0; ri < len(Ss); ri = ri + 1) {
     let r: float[] = softmax(Ss[ri]);
     A = push(A, r);
   }
-  return la.mat_mul(A, V);
+  return blas.mat_mul(A, V);
 }
 
 // ---------- MLP 反向传播训练 ----------
@@ -571,3 +584,560 @@ export func mlp2_loss(P: float[][], X: float[][], y: int[]): float {
   }
   return s / (n * 1.0);
 }
+
+// =====================================================================
+// AI 算法扩展（v0.2.0, 2026-11-09）
+// 全部为确定性算法（或 hash01 种子驱动），可在解释器 / 文本 IR / LLVM
+// 三后端逐字节一致执行。约定同库首：'/' 恒 float 需 * 1.0；list 值语义
+// 经 set_* 帮助函数返回新容器；循环变量名在函数内唯一。
+// =====================================================================
+
+// ---------- 向量化激活函数 ----------
+export func sigmoid_vec(v: float[]): float[] {
+  let out: float[] = [];
+  for (let i = 0; i < len(v); i = i + 1) { out = push(out, sigmoid(v[i])); }
+  return out;
+}
+export func tanh_vec(v: float[]): float[] {
+  let out: float[] = [];
+  for (let j = 0; j < len(v); j = j + 1) {
+    let e: float = exp(v[j]);
+    let einv: float = exp(-v[j]);
+    out = push(out, (e - einv) / (e + einv));
+  }
+  return out;
+}
+export func gelu_vec(v: float[]): float[] {
+  let out: float[] = [];
+  for (let k = 0; k < len(v); k = k + 1) {
+    out = push(out, 0.5 * v[k] * (1.0 + erf(v[k] / sqrt(2.0))));
+  }
+  return out;
+}
+export func swish_vec(v: float[]): float[] {
+  let out: float[] = [];
+  for (let m = 0; m < len(v); m = m + 1) { out = push(out, v[m] * sigmoid(v[m])); }
+  return out;
+}
+export func leaky_relu_vec(v: float[], a: float): float[] {
+  let out: float[] = [];
+  for (let n = 0; n < len(v); n = n + 1) {
+    if (v[n] > 0.0) { out = push(out, v[n]); } else { out = push(out, a * v[n]); }
+  }
+  return out;
+}
+export func softplus_vec(v: float[]): float[] {
+  let out: float[] = [];
+  for (let p = 0; p < len(v); p = p + 1) { out = push(out, log(1.0 + exp(v[p]))); }
+  return out;
+}
+
+// ---------- 损失函数 ----------
+// 均方误差 / 平均绝对误差（预测 a 对照真值 b）。
+export func mse(a: float[], b: float[]): float {
+  let s: float = 0.0;
+  for (let i = 0; i < len(a); i = i + 1) {
+    let d: float = a[i] - b[i];
+    s = s + d * d;
+  }
+  return s / (len(a) * 1.0);
+}
+export func mae(a: float[], b: float[]): float {
+  let s: float = 0.0;
+  for (let j = 0; j < len(a); j = j + 1) { s = s + abs(a[j] - b[j]); }
+  return s / (len(a) * 1.0);
+}
+// 二分类交叉熵（概率 p 对照标签 y ∈ {0,1}）。
+export func binary_cross_entropy(p: float, y: float): float {
+  let pc: float = p;
+  if (pc < 1e-12) { pc = 1e-12; }
+  if (pc > 1.0 - 1e-12) { pc = 1.0 - 1e-12; }
+  return -(y * log(pc) + (1.0 - y) * log(1.0 - pc));
+}
+// 多分类交叉熵（概率向量 prob 对照硬标签 label）。
+export func categorical_cross_entropy(prob: float[], label: int): float {
+  let pc: float = prob[label];
+  if (pc < 1e-12) { pc = 1e-12; }
+  return -log(pc);
+}
+
+// ---------- 正规方程回归（复用 linalg）----------
+// 多元线性回归 y = w0 + w1·x1 + …，返回长度 d+1 的权重（截距在前）。
+export func linear_regression(X: float[][], y: float[]): float[] {
+  let Xb: float[][] = add_bias(X);
+  let dd: int = len(Xb[0]);
+  let Xt: float[][] = la.mat_transpose(Xb);
+  let A: float[][] = blas.mat_mul(Xt, Xb);
+  let Xty: float[] = [];
+  for (let r = 0; r < dd; r = r + 1) {
+    let s: float = 0.0;
+    for (let c = 0; c < len(Xb); c = c + 1) { s = s + Xt[r][c] * y[c]; }
+    Xty = push(Xty, s);
+  }
+  return la.mat_solve(A, Xty);
+}
+// L2 岭回归（α=0 退化为线性回归）。
+export func ridge_regression(X: float[][], y: float[], alpha: float): float[] {
+  let Xb: float[][] = add_bias(X);
+  let dd: int = len(Xb[0]);
+  let Xt: float[][] = la.mat_transpose(Xb);
+  let A: float[][] = blas.mat_mul(Xt, Xb);
+  for (let r = 0; r < dd; r = r + 1) {
+    A = set_m(A, r, set_flt(A[r], r, A[r][r] + alpha));
+  }
+  let Xty: float[] = [];
+  for (let r2 = 0; r2 < dd; r2 = r2 + 1) {
+    let s: float = 0.0;
+    for (let c2 = 0; c2 < len(Xb); c2 = c2 + 1) { s = s + Xt[r2][c2] * y[c2]; }
+    Xty = push(Xty, s);
+  }
+  return la.mat_solve(A, Xty);
+}
+
+// ---------- 主成分分析（基于 linalg.mat_svd）----------
+func pca_center(X: float[][]): float[][] {
+  let d: int = len(X[0]);
+  let mean: float[] = zero_flt(d);
+  for (let i = 0; i < len(X); i = i + 1) {
+    for (let j = 0; j < d; j = j + 1) { mean = set_flt(mean, j, mean[j] + X[i][j]); }
+  }
+  for (let j2 = 0; j2 < d; j2 = j2 + 1) { mean = set_flt(mean, j2, mean[j2] / (len(X) * 1.0)); }
+  let out: float[][] = [];
+  for (let i2 = 0; i2 < len(X); i2 = i2 + 1) {
+    let row: float[] = [];
+    for (let j3 = 0; j3 < d; j3 = j3 + 1) { row = push(row, X[i2][j3] - mean[j3]); }
+    out = push(out, row);
+  }
+  return out;
+}
+// 前 k 个主成分（右奇异向量，按方差降序），返回 k×d 的载荷矩阵。
+export func pca_components(X: float[][], k: int): float[][] {
+  let Xc: float[][] = pca_center(X);
+  let packed: float[][] = la.mat_svd(Xc);
+  let m: int = len(Xc);
+  let out: float[][] = [];
+  for (let r = 0; r < k; r = r + 1) {
+    out = push(out, packed[m + 1 + r]);   // V 行（右奇异向量）
+  }
+  return out;
+}
+// 投影到前 k 个主成分：返回 n×k 得分矩阵。
+export func pca_project(X: float[][], k: int): float[][] {
+  let Xc: float[][] = pca_center(X);
+  let comps: float[][] = pca_components(X, k);
+  return blas.mat_mul(Xc, la.mat_transpose(comps));
+}
+
+// ---------- 多头注意力（扩展既有单头 attention）----------
+// X 为 seqlen×d，d 能被 nheads 整除；每个头做缩放点积注意力（Q=K=V=头切片），
+// 输出拼接回 d 维。
+export func multi_head_attention(X: float[][], nheads: int): float[][] {
+  let seq: int = len(X);
+  let d: int = len(X[0]);
+  let hd: int = int(d / nheads);
+  let out: float[][] = zero_mat(seq, d);
+  for (let h = 0; h < nheads; h = h + 1) {
+    let Xh: float[][] = [];
+    for (let r = 0; r < seq; r = r + 1) {
+      let row: float[] = [];
+      for (let c = 0; c < hd; c = c + 1) { row = push(row, X[r][h * hd + c]); }
+      Xh = push(Xh, row);
+    }
+    let S: float[][] = blas.mat_mul(Xh, la.mat_transpose(Xh));
+    let Ss: float[][] = la.mat_scale(S, 1.0 / sqrt(hd * 1.0));
+    let A: float[][] = [];
+    for (let ri = 0; ri < seq; ri = ri + 1) { A = push(A, softmax(Ss[ri])); }
+    let Yh: float[][] = blas.mat_mul(A, Xh);
+    for (let r2 = 0; r2 < seq; r2 = r2 + 1) {
+      let orow: float[] = out[r2];
+      for (let c2 = 0; c2 < hd; c2 = c2 + 1) {
+        orow = set_flt(orow, h * hd + c2, Yh[r2][c2]);
+      }
+      out = set_m(out, r2, orow);
+    }
+  }
+  return out;
+}
+
+// ---------- 表格 Q-learning（确定性，无随机探索）----------
+// trans 为经验元组列表，每项 [s, a, r, s2]（状态/动作以浮点整数编码）。
+// 对 trans 做 iters 轮时序差分更新，返回 ns×na 的 Q 表。
+export func q_learn(trans: float[][], ns: int, na: int, gamma: float, lr: float, iters: int): float[][] {
+  let Q: float[][] = zero_mat(ns, na);
+  for (let it = 0; it < iters; it = it + 1) {
+    for (let t = 0; t < len(trans); t = t + 1) {
+      let s: int = int(trans[t][0]);
+      let a: int = int(trans[t][1]);
+      let r: float = trans[t][2];
+      let s2: int = int(trans[t][3]);
+      let best: float = Q[s2][0];
+      for (let a2 = 1; a2 < na; a2 = a2 + 1) { if (Q[s2][a2] > best) { best = Q[s2][a2]; } }
+      let target: float = r + gamma * best;
+      Q = set_m(Q, s, set_flt(Q[s], a, Q[s][a] + lr * (target - Q[s][a])));
+    }
+  }
+  return Q;
+}
+// 给定 Q 表，返回状态 s 的最优动作。
+export func q_best_action(Q: float[][], s: int): int {
+  let bi: int = 0;
+  let bv: float = Q[s][0];
+  for (let a = 1; a < len(Q[s]); a = a + 1) { if (Q[s][a] > bv) { bv = Q[s][a]; bi = a; } }
+  return bi;
+}
+
+// ---------- 高斯混合模型（球形协方差）EM ----------
+// X n×d，k 类；用 hash01 选 k 个种子点确定性初始化；iters 次迭代。
+// 返回每点后验 argmax 的归属 int[]。
+export func gmm_em(X: float[][], k: int, iters: int, seed: int): int[] {
+  let n: int = len(X);
+  let d: int = len(X[0]);
+  let means: float[][] = [];
+  for (let j = 0; j < k; j = j + 1) {
+    let idx: int = int(hash01(j, seed) * (n * 1.0)) % n;
+    means = push(means, X[idx]);
+  }
+  let sig2: float[] = [];
+  let pi: float[] = [];
+  for (let j2 = 0; j2 < k; j2 = j2 + 1) {
+    sig2 = push(sig2, 1.0);
+    pi = push(pi, 1.0 / (k * 1.0));
+  }
+  let assign: int[] = zero_int(n);
+  for (let it = 0; it < iters; it = it + 1) {
+    let resp: float[][] = zero_mat(n, k);
+    for (let i = 0; i < n; i = i + 1) {
+      let wsum: float = 0.0;
+      let logw: float[] = [];
+      let bestc: int = 0;
+      let bestlv: float = 0.0;
+      for (let c = 0; c < k; c = c + 1) {
+        let diff: float = 0.0;
+        for (let f = 0; f < d; f = f + 1) {
+          let dd: float = X[i][f] - means[c][f];
+          diff = diff + dd * dd;
+        }
+        let lv: float = log(pi[c]) - 0.5 * (d * 1.0) * log(sig2[c]) - 0.5 * diff / sig2[c];
+        logw = push(logw, lv);
+        wsum = wsum + exp(lv);
+        if (c == 0 || lv > bestlv) { bestlv = lv; bestc = c; }
+      }
+      if (wsum < 1e-300) { wsum = 1e-300; }
+      for (let c2 = 0; c2 < k; c2 = c2 + 1) {
+        let pr: float = exp(logw[c2]) / wsum;
+        resp = set_m(resp, i, set_flt(resp[i], c2, pr));
+      }
+      assign = set_int(assign, i, bestc);
+    }
+    let Nk: float[] = zero_flt(k);
+    let newmeans: float[][] = zero_mat(k, d);
+    for (let i2 = 0; i2 < n; i2 = i2 + 1) {
+      for (let c3 = 0; c3 < k; c3 = c3 + 1) {
+        let w: float = resp[i2][c3];
+        Nk = set_flt(Nk, c3, Nk[c3] + w);
+        for (let f2 = 0; f2 < d; f2 = f2 + 1) {
+          newmeans = set_m(newmeans, c3, set_flt(newmeans[c3], f2, newmeans[c3][f2] + w * X[i2][f2]));
+        }
+      }
+    }
+    for (let c4 = 0; c4 < k; c4 = c4 + 1) {
+      let nk: float = Nk[c4];
+      if (nk < 1e-9) { nk = 1e-9; }
+      pi = set_flt(pi, c4, nk / (n * 1.0));
+      for (let f3 = 0; f3 < d; f3 = f3 + 1) {
+        newmeans = set_m(newmeans, c4, set_flt(newmeans[c4], f3, newmeans[c4][f3] / nk));
+      }
+      let ss: float = 0.0;
+      for (let i3 = 0; i3 < n; i3 = i3 + 1) {
+        let w3: float = resp[i3][c4];
+        for (let f4 = 0; f4 < d; f4 = f4 + 1) {
+          let dd2: float = X[i3][f4] - newmeans[c4][f4];
+          ss = ss + w3 * dd2 * dd2;
+        }
+      }
+      let vv: float = ss / (nk * (d * 1.0));
+      if (vv < 1e-6) { vv = 1e-6; }
+      sig2 = set_flt(sig2, c4, vv);
+    }
+    means = newmeans;
+  }
+  return assign;
+}
+
+// =====================================================================
+// 深度学习构件（v0.3.0, 2026-11-09）
+// 范数 / 归一化 / Dropout / 卷积 / RNN·GRU 单元及序列前向。约定同库首：
+// '/' 恒 float 需 * 1.0；list 值语义经 set_* 帮助函数；循环变量名函数内唯一；
+// Dropout 与既有 gmm_em 同样用 hash01 种子保证三后端一致。
+// =====================================================================
+
+// ---------- 范数 / 归一化 ----------
+export func l2_norm(v: float[]): float {
+  let s: float = 0.0;
+  for (let i = 0; i < len(v); i = i + 1) { s = s + v[i] * v[i]; }
+  return sqrt(s);
+}
+export func l1_norm(v: float[]): float {
+  let s: float = 0.0;
+  for (let j = 0; j < len(v); j = j + 1) { s = s + abs(v[j]); }
+  return s;
+}
+// 层归一化：对单条样本的特征维做均值 0、方差 1（eps 防除零）。
+export func layer_norm(x: float[], eps: float): float[] {
+  let n: float = len(x) * 1.0;
+  let mu: float = 0.0;
+  for (let a = 0; a < len(x); a = a + 1) { mu = mu + x[a]; }
+  mu = mu / n;
+  let varr: float = 0.0;
+  for (let b = 0; b < len(x); b = b + 1) { let d: float = x[b] - mu; varr = varr + d * d; }
+  varr = varr / n;
+  let out: float[] = [];
+  for (let c = 0; c < len(x); c = c + 1) {
+    out = push(out, (x[c] - mu) / sqrt(varr + eps));
+  }
+  return out;
+}
+
+// ---------- 批归一化 ----------
+// 训练态：对批次 X（batch×d）逐特征算均值/方差再标准化；gamma/beta 为长度 d 的
+// 缩放/平移参数。返回标准化后的批次。
+export func batch_norm_train(X: float[][], gamma: float[], beta: float[], eps: float): float[][] {
+  let n: int = len(X);
+  let d: int = len(X[0]);
+  let mean: float[] = zero_flt(d);
+  let varr: float[] = zero_flt(d);
+  for (let i = 0; i < n; i = i + 1) {
+    for (let j = 0; j < d; j = j + 1) { mean = set_flt(mean, j, mean[j] + X[i][j]); }
+  }
+  for (let j2 = 0; j2 < d; j2 = j2 + 1) { mean = set_flt(mean, j2, mean[j2] / (n * 1.0)); }
+  for (let i2 = 0; i2 < n; i2 = i2 + 1) {
+    for (let j3 = 0; j3 < d; j3 = j3 + 1) {
+      let dd: float = X[i2][j3] - mean[j3];
+      varr = set_flt(varr, j3, varr[j3] + dd * dd);
+    }
+  }
+  for (let j4 = 0; j4 < d; j4 = j4 + 1) { varr = set_flt(varr, j4, varr[j4] / (n * 1.0)); }
+  let out: float[][] = [];
+  for (let i3 = 0; i3 < n; i3 = i3 + 1) {
+    let row: float[] = [];
+    for (let j5 = 0; j5 < d; j5 = j5 + 1) {
+      let z: float = (X[i3][j5] - mean[j5]) / sqrt(varr[j5] + eps);
+      row = push(row, gamma[j5] * z + beta[j5]);
+    }
+    out = push(out, row);
+  }
+  return out;
+}
+// 推理态：用预计算的逐特征 mean/var 标准化（gamma/beta 同上）。
+export func batch_norm_infer(x: float[], mean: float[], varr: float[], gamma: float[], beta: float[], eps: float): float[] {
+  let out: float[] = [];
+  for (let i = 0; i < len(x); i = i + 1) {
+    let z: float = (x[i] - mean[i]) / sqrt(varr[i] + eps);
+    out = push(out, gamma[i] * z + beta[i]);
+  }
+  return out;
+}
+
+// ---------- Dropout（训练态，确定性掩码）----------
+// 以概率 rate 置零并按 1/(1-rate) 放大其余；掩码由 hash01 生成，三后端一致。
+// seed 不同 → 掩码不同。
+export func dropout(v: float[], rate: float, seed: int): float[] {
+  let scale: float = 1.0 / (1.0 - rate);
+  let out: float[] = [];
+  for (let i = 0; i < len(v); i = i + 1) {
+    if (hash01(i, seed) < rate) { out = push(out, 0.0); }
+    else { out = push(out, v[i] * scale); }
+  }
+  return out;
+}
+
+// ---------- 卷积（valid，步长 1）----------
+// 一维卷积：x 长度 n，核 k 长度 m，返回长度 n-m+1。
+export func conv1d(x: float[], k: float[]): float[] {
+  let n: int = len(x);
+  let m: int = len(k);
+  let out: float[] = [];
+  for (let i = 0; i <= n - m; i = i + 1) {
+    let s: float = 0.0;
+    for (let j = 0; j < m; j = j + 1) { s = s + x[i + j] * k[j]; }
+    out = push(out, s);
+  }
+  return out;
+}
+// 二维卷积：x 为 h×w，核 k 为 kh×kw，返回 (h-kh+1)×(w-kw+1)。
+export func conv2d(x: float[][], k: float[][]): float[][] {
+  let h: int = len(x);
+  let w: int = len(x[0]);
+  let kh: int = len(k);
+  let kw: int = len(k[0]);
+  let out: float[][] = [];
+  for (let i = 0; i <= h - kh; i = i + 1) {
+    let row: float[] = [];
+    for (let j = 0; j <= w - kw; j = j + 1) {
+      let s: float = 0.0;
+      for (let ki = 0; ki < kh; ki = ki + 1) {
+        for (let kj = 0; kj < kw; kj = kj + 1) {
+          s = s + x[i + ki][j + kj] * k[ki][kj];
+        }
+      }
+      row = push(row, s);
+    }
+    out = push(out, row);
+  }
+  return out;
+}
+
+// ---------- 循环单元 ----------
+// 简单 RNN 单元：h' = tanh(Wx·x + Wh·h + b)。Wx 为 hidden×in，Wh 为 hidden×hidden，b 为 hidden。
+export func rnn_cell(x: float[], h: float[], Wx: float[][], Wh: float[][], b: float[]): float[] {
+  let pre: float[] = [];
+  for (let r = 0; r < len(Wx); r = r + 1) { pre = push(pre, dotv(Wx[r], x)); }
+  for (let r2 = 0; r2 < len(Wh); r2 = r2 + 1) {
+    pre = set_flt(pre, r2, pre[r2] + dotv(Wh[r2], h) + b[r2]);
+  }
+  return tanh_vec(pre);
+}
+// RNN 前向：对序列 xs 迭代 rnn_cell，返回最终隐状态。
+export func rnn_forward(xs: float[][], h0: float[], Wx: float[][], Wh: float[][], b: float[]): float[] {
+  let h: float[] = h0;
+  for (let t = 0; t < len(xs); t = t + 1) {
+    h = rnn_cell(xs[t], h, Wx, Wh, b);
+  }
+  return h;
+}
+// GRU 单元：x 输入，h 隐状态；W*z/r/h 为 (hidden×in)，U*z/r/hh 为 (hidden×hidden)，
+// b*z/r/h 长度 hidden。返回新隐状态。
+export func gru_cell(x: float[], h: float[], Wz: float[][], Wr: float[][], Whh: float[][],
+                    Uz: float[][], Ur: float[][], Uhh: float[][], bz: float[], br: float[], bh: float[]): float[] {
+  let H: int = len(h);
+  let zpre: float[] = [];
+  for (let i = 0; i < H; i = i + 1) { zpre = push(zpre, dotv(Wz[i], x) + dotv(Uz[i], h) + bz[i]); }
+  let z: float[] = sigmoid_vec(zpre);
+  let rpre: float[] = [];
+  for (let j = 0; j < H; j = j + 1) { rpre = push(rpre, dotv(Wr[j], x) + dotv(Ur[j], h) + br[j]); }
+  let r: float[] = sigmoid_vec(rpre);
+  let rh: float[] = [];
+  for (let m = 0; m < H; m = m + 1) { rh = push(rh, r[m] * h[m]); }
+  let hpre: float[] = [];
+  for (let n = 0; n < H; n = n + 1) { hpre = push(hpre, dotv(Whh[n], x) + dotv(Uhh[n], rh) + bh[n]); }
+  let ht: float[] = tanh_vec(hpre);
+  let out: float[] = [];
+  for (let o = 0; o < H; o = o + 1) { out = push(out, (1.0 - z[o]) * h[o] + z[o] * ht[o]); }
+  return out;
+}
+// GRU 前向：对序列 xs 迭代 gru_cell，返回最终隐状态。
+export func gru_forward(xs: float[][], h0: float[], Wz: float[][], Wr: float[][], Whh: float[][],
+                       Uz: float[][], Ur: float[][], Uhh: float[][], bz: float[], br: float[], bh: float[]): float[] {
+  let h: float[] = h0;
+  for (let t = 0; t < len(xs); t = t + 1) {
+    h = gru_cell(xs[t], h, Wz, Wr, Whh, Uz, Ur, Uhh, bz, br, bh);
+  }
+  return h;
+}
+
+// =====================================================================
+// 优化器与反向（v0.4.0, 2026-11-09）
+// 让「训练循环」能纯 .lume 落地：扁平 float[] 参数 + 状态打包 float[][]，
+// 三后端一致（pow 为内建；列表值语义经 set_*；'/' 恒 float 需 * 1.0；
+// 循环变量名函数内唯一）。
+// =====================================================================
+
+// ---------- 优化器 ----------
+// 朴素 SGD：params[i] -= lr * grad[i]。
+export func sgd_step(params: float[], grad: float[], lr: float): float[] {
+  let out: float[] = [];
+  for (let i = 0; i < len(params); i = i + 1) {
+    out = push(out, params[i] - lr * grad[i]);
+  }
+  return out;
+}
+
+// SGD + 动量：速度初始化为零向量（长度 n）。
+export func sgd_momentum_init(n: int): float[] {
+  return zero_flt(n);
+}
+
+// SGD + 动量一步：vel' = mu·vel - lr·grad；params' = params + vel'。
+// 返回 [new_params, new_vel]（长度 2 的 float[][]），便于纯函数式串接。
+export func sgd_momentum_step(params: float[], grad: float[], vel: float[], lr: float, mu: float): float[][] {
+  let nvel: float[] = [];
+  let npar: float[] = [];
+  for (let i = 0; i < len(params); i = i + 1) {
+    let nv: float = mu * vel[i] - lr * grad[i];
+    nvel = push(nvel, nv);
+    npar = push(npar, params[i] + nv);
+  }
+  let out: float[][] = [];
+  out = push(out, npar);
+  out = push(out, nvel);
+  return out;
+}
+
+// Adam 状态初始化（一阶矩 m=0、二阶矩 v=0），返回 [m, v]。
+export func adam_init(n: int): float[][] {
+  let out: float[][] = [];
+  out = push(out, zero_flt(n));
+  out = push(out, zero_flt(n));
+  return out;
+}
+
+// Adam 一步（t 从 1 起算）。返回 [new_params, new_m, new_v]。
+// 偏差修正：mhat = m/(1-b1^t)、vhat = v/(1-b2^t)。
+export func adam_step(params: float[], grad: float[], state: float[][], t: int, lr: float, b1: float, b2: float, eps: float): float[][] {
+  let m: float[] = state[0];
+  let v: float[] = state[1];
+  let nm: float[] = [];
+  let nv: float[] = [];
+  let npar: float[] = [];
+  for (let i = 0; i < len(params); i = i + 1) {
+    let g: float = grad[i];
+    let mi: float = b1 * m[i] + (1.0 - b1) * g;
+    let vi: float = b2 * v[i] + (1.0 - b2) * g * g;
+    nm = push(nm, mi);
+    nv = push(nv, vi);
+    let mhat: float = mi / (1.0 - pow(b1, t * 1.0));
+    let vhat: float = vi / (1.0 - pow(b2, t * 1.0));
+    npar = push(npar, params[i] - lr * mhat / (sqrt(vhat) + eps));
+  }
+  let out: float[][] = [];
+  out = push(out, npar);
+  out = push(out, nm);
+  out = push(out, nv);
+  return out;
+}
+
+// ---------- 词嵌入（查表 + 反向梯度）----------
+// 查表：E 为 vocab×dim，返回 E[idx]（值语义，返回该行副本）。
+export func embedding_lookup(E: float[][], idx: int): float[] {
+  return E[idx];
+}
+
+// 嵌入反向：返回 vocab×dim 零矩阵，仅第 idx 行置为 g（稀疏梯度）。
+// 训练时对整表扁平化后，仅该行的梯度被优化器采用。
+export func embedding_grad(E: float[][], idx: int, g: float[]): float[][] {
+  let out: float[][] = zero_mat(len(E), len(E[0]));
+  return set_m(out, idx, g);
+}
+
+// ---------- softmax 交叉熵（数值稳定 + 反向）----------
+// 损失：对 logits 做稳定 softmax 后取 -log(p[label])（p 夹逼到 [1e-12,1]）。
+export func softmax_cross_entropy_loss(logits: float[], label: int): float {
+  let p: float[] = softmax(logits);
+  let pc: float = p[label];
+  if (pc < 1e-12) { pc = 1e-12; }
+  if (pc > 1.0 - 1e-12) { pc = 1.0 - 1e-12; }
+  return -log(pc);
+}
+
+// 反向：对 logits 的梯度 = softmax(logits) - onehot(label)（经典合并梯度）。
+export func softmax_cross_entropy_grad(logits: float[], label: int): float[] {
+  let p: float[] = softmax(logits);
+  let out: float[] = [];
+  for (let i = 0; i < len(p); i = i + 1) {
+    if (i == label) { out = push(out, p[i] - 1.0); }
+    else { out = push(out, p[i]); }
+  }
+  return out;
+}
+
+
