@@ -29,6 +29,13 @@ LEAK_WS = "Workspace" + "/" + "CNB"
 LEAK_REPO = "individ" + "ular-invest"
 NEUTRAL_HOME = "/" + "home" + "/builder"
 PLACEHOLDER_HOME = "/" + "Users" + "/<user>"
+# 凭据测试数据同样拼出来: 这个文件也在守卫的扫描范围内。
+_BASIC_PREFIX = "Basic "
+_BASIC_B64 = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="  # 32+ 字符, 形如真凭据
+LEAK_BASIC = _BASIC_PREFIX + _BASIC_B64
+LEAK_SK = "sk-" + "A" * 32
+PLACEHOLDER_BASIC = _BASIC_PREFIX + "<上一步输出>"
+PLACEHOLDER_SK = "sk-xxxx"
 
 
 class ScanScopeTest(unittest.TestCase):
@@ -145,6 +152,20 @@ class ScanScopeTest(unittest.TestCase):
         rc, out = self._scan()
         self.assertEqual(rc, 0, out)
         self.assertIn("未跟踪", out, f"提示没说清扫描范围: {out}")
+
+    def test_real_credential_shapes_reported(self):
+        """真实凭据形态必须拦下 —— 路径/网段规则对它们完全无感。"""
+        self._commit("cfg.env", "AGENT_BASIC_AUTH=" + LEAK_BASIC + "\nKEY=" + LEAK_SK + "\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 1, f"凭据形态没被拦下:\n{out}")
+        self.assertIn("Basic 认证头", out)
+        self.assertIn("API Key", out)
+
+    def test_credential_placeholders_not_reported(self):
+        """sk-xxxx / Basic <占位> 是文档说明写法，不能误报。"""
+        self._commit(".env.example", PLACEHOLDER_SK + "\n" + PLACEHOLDER_BASIC + "\n")
+        rc, out = self._scan()
+        self.assertEqual(rc, 0, f"占位凭据被误报:\n{out}")
 
     def test_local_without_data_degrades_visibly(self):
         """--local 但没有本机数据时，要说明"只跑了硬规则"。

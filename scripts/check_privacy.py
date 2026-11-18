@@ -77,6 +77,19 @@ ALLOWED_MACS = {
     "01:00:5e:7f:ff:fa",   # 组播 MAC(SSDP 示例)
 }
 
+# 凭据形态(本轮新引入 AGENT_BASIC_AUTH 头值后补): 真实头值/密钥贴进 tracked
+# 文件时, 路径/网段规则完全看不见。要求足够长且字符集严格, 不误伤 .env.example
+# 里的 sk-xxxx / Basic <占位> 这类说明写法。
+RE_CREDENTIALS = (
+    ("Basic 认证头", re.compile(r"Basic\s+[A-Za-z0-9+/=]{24,}")),
+    ("API Key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}")),
+    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}")),
+    ("GitHub fine-grained token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}")),
+    ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("PEM private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("bcrypt 口令哈希", re.compile(r"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}")),
+)
+
 RE_IPV4 = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
 RE_MAC = re.compile(r"\b([0-9a-fA-F]{1,2})(?::[0-9a-fA-F]{1,2}){5}\b")
 
@@ -236,6 +249,11 @@ def main(argv):
                     problems.append((rel, no, f"本机真实 MAC: {norm}"))
                 elif norm not in ALLOWED_MACS:
                     problems.append((rel, no, f"非示例 MAC: {norm}"))
+
+            # --- 凭据形态(只显示前缀, 不把命中值原样打进日志) ---
+            for label, pattern in RE_CREDENTIALS:
+                for m in pattern.finditer(line):
+                    problems.append((rel, no, f"{label}: {m.group(0)[:16]}..."))
 
             # --- 构建机路径 / 私有身份 ---
             for label, pattern in (
